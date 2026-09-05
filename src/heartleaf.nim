@@ -206,7 +206,7 @@ const
   DirectorCardPortraitSize = 36
     ## Card faces are the banner portraits downscaled to about this.
   DirectorCardZ = 32_000
-  DirectorCardObjectBase = 28_000
+  DirectorCardObjectBase* = 28_000
     ## Clear of HeartObjectBase (27_000..): the heart emotes ride the
     ## same packets as the cards in the director view.
   DirectorCardSliceInset = 10

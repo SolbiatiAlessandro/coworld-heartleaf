@@ -145,6 +145,13 @@ class Frame:
             "viewport": vp,
             "bottom_xy": (bottom["x"], bottom["y"]) if bottom else None,
             "bottom_sprite_wh": bottom_sprite,
+            "bottom_sprite_id": bottom["sprite"] if bottom else None,
+            "overhang_sprite_id": (
+                self.objects[OVERHANG_OBJECT_ID]["sprite"]
+                if OVERHANG_OBJECT_ID in self.objects else None),
+            "inset_sprite_id": (
+                self.objects[INSET_BOTTOM_OBJECT_ID]["sprite"]
+                if INSET_BOTTOM_OBJECT_ID in self.objects else None),
             "backdrop": BACKDROP_OBJECT_ID in self.objects,
             "house_inset": INSET_BOTTOM_OBJECT_ID in self.objects,
             "scrubber": REPLAY_SCRUBBER_OBJECT_ID in self.objects,
