@@ -205,7 +205,6 @@ const
   DirectorCardPortraitSize = 36
     ## Card faces are the banner portraits downscaled to about this.
   DirectorCardZ = 32_000
-  DirectorCardSpriteBase = 9100
   DirectorCardObjectBase = 28_000
     ## Clear of HeartObjectBase (27_000..): the heart emotes ride the
     ## same packets as the cards in the director view.
@@ -216,6 +215,30 @@ const
     ## Content padding inside a card's leafy frame.
   DirectorCardFaceSpriteBase = 9150
   DirectorCardFaceObjectBase = 28_100
+  DirectorCardBgSpriteBase = 9300
+    ## One parchment card background per body-line count, all defined in
+    ## the init packet. A card is assembled from parts on the client -
+    ## this background, an init-packet portrait, and glyph objects - so
+    ## nothing about a card is ever defined again while it is on screen.
+  DirectorCardMaxLines = 10
+    ## Body lines one card can show, and so how many backgrounds exist.
+  DirectorCardNameGlyphSpriteBase = 9400
+    ## Tiny5 glyphs in the card's name ink.
+  DirectorCardRelationGlyphSpriteBase = 9500
+    ## Tiny5 glyphs in the card's relation ink. Body text and the stats
+    ## footer reuse the chat banner's glyphs, which are already shipped.
+  DirectorCardGlyphObjectBase = 29_000
+  DirectorCardMaxGlyphs = 900
+    ## Object ids reserved for card text, across every card on screen.
+  DirectorCardNameInkR = 94'u8
+  DirectorCardNameInkG = 58'u8
+  DirectorCardNameInkB = 22'u8
+  DirectorCardRelationInkR = 158'u8
+  DirectorCardRelationInkG = 116'u8
+  DirectorCardRelationInkB = 66'u8
+  DirectorCardRuleInkR = 178'u8
+  DirectorCardRuleInkG = 138'u8
+  DirectorCardRuleInkB = 90'u8
   DirectorBounceHops = [2, 4, 6, 6, 5, 4, 2, 0, 2, 3, 3, 2, 1, 0]
     ## The little hop a gnome does when its new line lands, in pixels
     ## of lift per frame.
@@ -1684,6 +1707,90 @@ proc dayTintIndex(sim: SimServer): int =
       (DayEndMinutes - DuskStartMinutes)
   )
 
+proc cardPortraitSprite(sim: SimServer, gnomeIndex: int): RgbaSprite =
+  ## The banner portrait downscaled for one conversation card.
+  if sim.portraits.len == 0:
+    return newRgbaSprite(DirectorCardPortraitSize, DirectorCardPortraitSize)
+  let
+    source = sim.portraits[gnomeIndex mod sim.portraits.len]
+    step = max(1, source.width div DirectorCardPortraitSize)
+  result = newRgbaSprite(source.width div step, source.height div step)
+  for y in 0 ..< result.height:
+    for x in 0 ..< result.width:
+      result.putPixel(x, y, source.rgbaSpriteAt(x * step, y * step))
+
+type CardLayout = object
+  ## Where the parts of one conversation card sit. The background is an
+  ## init-packet sprite chosen by body-line count, so every measurement
+  ## here has to depend on nothing but that count.
+  lineHeight: int
+  textX: int
+  textWidth: int
+  bodyHeight: int
+  height: int
+  ruleY: int
+  statsY: int
+  relationY: int
+
+proc cardLayout(sim: SimServer, lineCount: int): CardLayout =
+  ## The card geometry for a given number of wrapped body lines.
+  let
+    pad = DirectorCardInnerPad
+    portraitSize = DirectorCardPortraitSize
+  result.lineHeight = sim.textFont.height + 1
+  result.textX = pad + portraitSize + 4
+  result.textWidth = DirectorCardWidth - result.textX - pad
+  result.bodyHeight = max(
+    portraitSize, (lineCount + 1) * result.lineHeight + 2
+  )
+  # The relation line is always allowed for, so the background does not
+  # need a second variant for cards that happen to have no relation.
+  let footerHeight = 5 + result.lineHeight * 2 + 1
+  result.height = result.bodyHeight + footerHeight + pad * 2
+  result.ruleY = pad + result.bodyHeight + 2
+  result.statsY = result.ruleY + 3
+  result.relationY = result.statsY + result.lineHeight + 1
+
+proc directorCardBackground(sim: SimServer, lineCount: int): RgbaSprite =
+  ## The parchment and its footer rule for a card of this many lines.
+  ## Text, portrait and stats are objects placed over it, so this is
+  ## the same picture for every speaker and ships once, in the init
+  ## packet.
+  let layout = sim.cardLayout(lineCount)
+  if sim.chatBanner.width > 0:
+    result = sim.chatBanner.nineSliceSprite(
+      DirectorCardWidth, layout.height, DirectorCardSliceInset
+    )
+  else:
+    result = newRgbaSprite(DirectorCardWidth, layout.height)
+    result.fillRect(
+      0, 0, DirectorCardWidth, layout.height, rgba(233, 213, 170, 245)
+    )
+  result.fillRect(
+    DirectorCardInnerPad,
+    layout.ruleY,
+    DirectorCardWidth - DirectorCardInnerPad * 2,
+    1,
+    rgba(
+      DirectorCardRuleInkR, DirectorCardRuleInkG, DirectorCardRuleInkB, 255
+    )
+  )
+
+proc cardGlyphSprite(
+  sim: SimServer,
+  ch: char,
+  r, g, b: uint8
+): RgbaSprite =
+  ## One Tiny5 glyph in a card ink, on a transparent background.
+  let
+    glyph = sim.textFont.glyphAt(ch)
+    ink = rgba(r, g, b, 255)
+  result = newRgbaSprite(max(1, glyph.width), max(1, glyph.height))
+  for gy in 0 ..< glyph.height:
+    for gx in 0 ..< glyph.width:
+      if glyph.glyphPixel(gx, gy):
+        result.putPixel(gx, gy, ink)
+
 proc addSpriteProtocolInit(
   packet: var seq[uint8],
   sim: SimServer,
@@ -1795,6 +1902,39 @@ proc addSpriteProtocolInit(
       ch.bannerGlyphSpriteId(),
       sim.bannerGlyphSprite(ch),
       "banner glyph " & $ch
+    )
+  # Every part a conversation card is built from ships here, once, so a
+  # card that appears or changes its line costs objects and no sprite.
+  for lineCount in 0 .. DirectorCardMaxLines:
+    packet.addRgbaSprite(
+      DirectorCardBgSpriteBase + lineCount,
+      sim.directorCardBackground(lineCount),
+      "director card background " & $lineCount
+    )
+  for code in FirstPrintableAscii .. LastPrintableAscii:
+    let ch = char(code)
+    packet.addRgbaSprite(
+      DirectorCardNameGlyphSpriteBase + code - FirstPrintableAscii,
+      sim.cardGlyphSprite(
+        ch, DirectorCardNameInkR, DirectorCardNameInkG, DirectorCardNameInkB
+      ),
+      "card name glyph " & $ch
+    )
+    packet.addRgbaSprite(
+      DirectorCardRelationGlyphSpriteBase + code - FirstPrintableAscii,
+      sim.cardGlyphSprite(
+        ch,
+        DirectorCardRelationInkR,
+        DirectorCardRelationInkG,
+        DirectorCardRelationInkB
+      ),
+      "card relation glyph " & $ch
+    )
+  for i in 0 ..< HouseCount:
+    packet.addRgbaSprite(
+      DirectorCardFaceSpriteBase + i,
+      sim.cardPortraitSprite(i),
+      "director card face " & $i
     )
   for phase in 0 ..< ConversationRingPhases:
     packet.addRgbaSprite(
@@ -3478,79 +3618,41 @@ proc wrapCardLines(sim: SimServer, text: string, maxWidth: int): seq[string] =
   if line.len > 0:
     result.add(line)
 
-proc cardPortraitSprite(sim: SimServer, gnomeIndex: int): RgbaSprite =
-  ## The banner portrait downscaled for one conversation card.
-  if sim.portraits.len == 0:
-    return newRgbaSprite(DirectorCardPortraitSize, DirectorCardPortraitSize)
-  let
-    source = sim.portraits[gnomeIndex mod sim.portraits.len]
-    step = max(1, source.width div DirectorCardPortraitSize)
-  result = newRgbaSprite(source.width div step, source.height div step)
-  for y in 0 ..< result.height:
-    for x in 0 ..< result.width:
-      result.putPixel(x, y, source.rgbaSpriteAt(x * step, y * step))
+proc glyphHasInk(glyph: PixelGlyph): bool =
+  ## Returns true when a glyph draws at least one foreground pixel.
+  for pixel in glyph.pixels:
+    if pixel:
+      return true
 
-proc directorCardSprite(
+proc addCardGlyphs(
+  packet: var seq[uint8],
   sim: SimServer,
-  player: Player,
-  relation: string,
-  connections: int,
-  portrait: RgbaSprite
-): RgbaSprite =
-  ## One conversation card for the director cut, framed like the chat
-  ## banner: the speaker's name beside their full spoken line, then a
-  ## ruled footer with their points, connections, and the relation to
-  ## their listener. The face is a separate object over the reserved
-  ## left area, so it can hop when the line is new.
-  let
-    nameInk = rgba(94, 58, 22, 255)
-    textInk = rgba(ChatBannerInkR, ChatBannerInkG, ChatBannerInkB, 255)
-    relationInk = rgba(158, 116, 66, 255)
-    ruleInk = rgba(178, 138, 90, 255)
-    pad = DirectorCardInnerPad
-    textX = pad + portrait.width + 4
-    textWidth = DirectorCardWidth - textX - pad
-    lines = sim.wrapCardLines(player.message, textWidth)
-    lineHeight = sim.textFont.height + 1
-    bodyHeight = max(portrait.height, (lines.len + 1) * lineHeight + 2)
-    relationHeight =
-      if relation.len > 0:
-        lineHeight + 1
-      else:
-        0
-    footerHeight = 5 + lineHeight + relationHeight
-    height = bodyHeight + footerHeight + pad * 2
-    pointsText = "Points: " & $player.score
-    connectionsText = "Connections: " & $connections
-    ruleY = pad + bodyHeight + 2
-    statsY = ruleY + 3
-  if sim.chatBanner.width > 0:
-    result = sim.chatBanner.nineSliceSprite(
-      DirectorCardWidth, height, DirectorCardSliceInset
-    )
-  else:
-    result = newRgbaSprite(DirectorCardWidth, height)
-    result.fillRect(0, 0, DirectorCardWidth, height, rgba(233, 213, 170, 245))
-  sim.blitTinyText(result, player.playerName, textX, pad, nameInk)
-  for i, line in lines:
-    sim.blitTinyText(
-      result,
-      line,
-      textX,
-      pad + (i + 1) * lineHeight + 2,
-      textInk
-    )
-  result.fillRect(pad, ruleY, DirectorCardWidth - pad * 2, 1, ruleInk)
-  sim.blitTinyText(result, pointsText, pad, statsY, textInk)
-  sim.blitTinyText(
-    result,
-    connectionsText,
-    DirectorCardWidth - pad - sim.chatTextWidth(connectionsText),
-    statsY,
-    textInk
-  )
-  if relation.len > 0:
-    sim.blitTinyText(result, relation, pad, statsY + lineHeight + 1, relationInk)
+  text: string,
+  x, y: int,
+  spriteBase: int,
+  glyphSlot: var int
+) =
+  ## Places one run of card text as individual glyph objects, in the ink
+  ## the sprite base was built for. The glyphs themselves are init-packet
+  ## sprites, so text on a card costs 12 bytes an inked character and
+  ## never a sprite definition. Spaces have no ink and cost nothing.
+  var dx = x
+  for ch in text:
+    if glyphSlot >= DirectorCardMaxGlyphs:
+      return
+    let glyph = sim.textFont.glyphAt(ch)
+    if glyphHasInk(glyph):
+      let code = clamp(ord(ch), FirstPrintableAscii, LastPrintableAscii)
+      packet.addObject(
+        DirectorCardGlyphObjectBase + glyphSlot,
+        dx,
+        y,
+        DirectorCardZ + 2,
+        MapLayerId,
+        spriteBase + code - FirstPrintableAscii
+      )
+      inc glyphSlot
+    dx += sim.textFont.glyphAdvance(ch)
 
 proc addDirectorConversationCards(
   packet: var seq[uint8],
@@ -3572,7 +3674,9 @@ proc addDirectorConversationCards(
     worldCenterX = cropX + cropW div 2
     reach = sim.directorFocusRadius + ConversationExitRadius div 2 +
       GnomeSpriteSize div 2
-  var left, right, speakers: seq[int]
+  var
+    left, right, speakers: seq[int]
+    glyphSlot = 0
   for i, player in sim.players:
     if player.mapIndex != MainMapIndex:
       continue
@@ -3648,44 +3752,40 @@ proc addDirectorConversationCards(
     if column.len == 0:
       continue
     var
-      sprites: seq[RgbaSprite]
-      faces: seq[RgbaSprite]
+      wrapped: seq[seq[string]]
       relations: seq[string]
+      layouts: seq[CardLayout]
       totalHeight = -DirectorCardGapY
     for i in column:
-      let
-        relation = relationLabel(i)
-        face = sim.cardPortraitSprite(sim.players[i].gnomeIndex)
-      relations.add(relation)
-      faces.add(face)
-      let sprite = sim.directorCardSprite(
-        sim.players[i], relation, connectionPoints(i), face
-      )
-      sprites.add(sprite)
-      totalHeight += sprite.height + DirectorCardGapY
+      let probe = sim.cardLayout(0)
+      var lines = sim.wrapCardLines(sim.players[i].message, probe.textWidth)
+      if lines.len > DirectorCardMaxLines:
+        lines.setLen(DirectorCardMaxLines)
+      let layout = sim.cardLayout(lines.len)
+      wrapped.add(lines)
+      relations.add(relationLabel(i))
+      layouts.add(layout)
+      totalHeight += layout.height + DirectorCardGapY
     # The delay-chat banner overlays the window's bottom edge; keep
     # the columns clear of it.
     let bottomLimit = viewHeight - viewHeight div 6
     var y = max(topInset, (viewHeight - totalHeight) div 2)
     for slot, i in column:
-      let sprite = sprites[slot]
-      if y + sprite.height > bottomLimit and slot > 0:
+      let layout = layouts[slot]
+      if y + layout.height > bottomLimit and slot > 0:
         break  # the column is full; later cards wait their turn
-      packet.addRgbaSpriteCached(
-        cache,
-        DirectorCardSpriteBase + i,
-        sprite,
-        "director card " & $i & " " & $sim.players[i].score & " " &
-          $connectionPoints(i) & " " & relations[slot] & " " &
-          sim.players[i].message
-      )
+      # The card is assembled from parts that already shipped in the
+      # init packet: this parchment background, the portrait, and one
+      # object per glyph. Nothing here defines a sprite, so a new
+      # spoken line costs a few hundred bytes of objects instead of a
+      # fresh 40KB card image.
       packet.addObject(
         DirectorCardObjectBase + i,
         columnX,
         y,
         DirectorCardZ,
         MapLayerId,
-        DirectorCardSpriteBase + i
+        DirectorCardBgSpriteBase + wrapped[slot].len
       )
       # The face rides over the card as its own object so it can hop
       # when the line is new.
@@ -3693,22 +3793,61 @@ proc addDirectorConversationCards(
       if i < sim.directorBounce.len and sim.directorBounce[i] > 0:
         hop =
           DirectorBounceHops[DirectorBounceHops.len - sim.directorBounce[i]]
-      let gnomeIndex = sim.players[i].gnomeIndex
-      packet.addRgbaSpriteCached(
-        cache,
-        DirectorCardFaceSpriteBase + gnomeIndex,
-        faces[slot],
-        "director card face " & $gnomeIndex
-      )
       packet.addObject(
         DirectorCardFaceObjectBase + i,
         columnX + DirectorCardInnerPad,
         y + DirectorCardInnerPad - hop,
         DirectorCardZ + 1,
         MapLayerId,
-        DirectorCardFaceSpriteBase + gnomeIndex
+        DirectorCardFaceSpriteBase +
+          (sim.players[i].gnomeIndex mod HouseCount)
       )
-      y += sprite.height + DirectorCardGapY
+      let pointsText = "Points: " & $sim.players[i].score
+      let connectionsText = "Connections: " & $connectionPoints(i)
+      packet.addCardGlyphs(
+        sim,
+        sim.players[i].playerName,
+        columnX + layout.textX,
+        y + DirectorCardInnerPad,
+        DirectorCardNameGlyphSpriteBase,
+        glyphSlot
+      )
+      for lineIndex, line in wrapped[slot]:
+        packet.addCardGlyphs(
+          sim,
+          line,
+          columnX + layout.textX,
+          y + DirectorCardInnerPad + (lineIndex + 1) * layout.lineHeight + 2,
+          ChatBannerGlyphSpriteBase,
+          glyphSlot
+        )
+      packet.addCardGlyphs(
+        sim,
+        pointsText,
+        columnX + DirectorCardInnerPad,
+        y + layout.statsY,
+        ChatBannerGlyphSpriteBase,
+        glyphSlot
+      )
+      packet.addCardGlyphs(
+        sim,
+        connectionsText,
+        columnX + DirectorCardWidth - DirectorCardInnerPad -
+          sim.chatTextWidth(connectionsText),
+        y + layout.statsY,
+        ChatBannerGlyphSpriteBase,
+        glyphSlot
+      )
+      if relations[slot].len > 0:
+        packet.addCardGlyphs(
+          sim,
+          relations[slot],
+          columnX + DirectorCardInnerPad,
+          y + layout.relationY,
+          DirectorCardRelationGlyphSpriteBase,
+          glyphSlot
+        )
+      y += layout.height + DirectorCardGapY
 
 proc addDirectorWorldView(
   packet: var seq[uint8],
@@ -4176,12 +4315,6 @@ proc layoutBannerHearers(
       nameX: nameX
     ))
     nameRight = nameX - ChatBannerNameGap
-
-proc glyphHasInk(glyph: PixelGlyph): bool =
-  ## Returns true when a glyph draws at least one foreground pixel.
-  for pixel in glyph.pixels:
-    if pixel:
-      return true
 
 proc addBannerGlyphs(
   packet: var seq[uint8],
