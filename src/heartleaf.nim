@@ -3928,9 +3928,10 @@ proc addDirectorWorldView(
   ## The viewport is exactly the crop, and the crop is always inside the
   ## map, so every pixel the client is asked to draw is map. The map is
   ## 16:9 and every crop keeps its aspect, so a 16:9 window fits the
-  ## viewport edge to edge: no letterbox, no pillarbox, no backdrop to
-  ## widen over. The conversation cards live in the crop's own left and
-  ## right margins, over the map, instead of beside it.
+  ## viewport edge to edge: no letterbox and no pillarbox, and nothing
+  ## painted behind the map to widen over. The conversation cards live
+  ## in the crop's own left and right margins, over the map, instead of
+  ## beside it.
   let
     tintIndex = sim.dayTintIndex()
     cameraX = int(sim.directorCamX)
