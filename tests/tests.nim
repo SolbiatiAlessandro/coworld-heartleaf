@@ -1908,4 +1908,53 @@ block:
   doAssert connectionTier(2.0 / 3.0) == 2, "two thirds up laughs"
   doAssert connectionTier(1.0) == 2
 
+echo "Testing the director cuts to a dinner party"
+block:
+  # Andre: "i know there are parties happening but the director did not
+  # go there". A dinner is the one scene of the day the outdoor map
+  # cannot show: it happens inside a house, so the director has to pull
+  # up the house interior. Recorded replays of mock games never host one
+  # -- every gnome eats at home -- so the party is staged here instead.
+  var sim = initSimServer(DefaultSeed)
+  const HostHouse = 2
+  for seat in 0 ..< 4:
+    doAssert sim.addPlayer("guest" & $seat, seat) == seat
+  for seat in 0 ..< 4:
+    sim.teleportPlayer(
+      seat, HomeMapIndexBase + HostHouse, 60 + seat * 12, 90, DirDown
+    )
+    doAssert sim.playerMapIndex(seat) == HomeMapIndexBase + HostHouse
+  sim.updateDirectorCamera()
+  var
+    state = newDirectorViewerState()
+    nextState: PlayerViewerState
+  let packet = sim.buildGlobalPacket(state, nextState)
+  var
+    sawInsetBottom = false
+    sawInsetOverhang = false
+    insetX = -1
+    viewportW = 0
+  for message in packet.parseSpritePacket():
+    if message.kind == spkViewport and message.viewport.layer == MapLayerId:
+      viewportW = message.viewport.width
+    if message.kind != spkObject:
+      continue
+    if message.objectDef.id == InsetBottomObjectId:
+      sawInsetBottom = true
+      insetX = message.objectDef.x
+    if message.objectDef.id == InsetOverhangObjectId:
+      sawInsetOverhang = true
+  doAssert sawInsetBottom,
+    "a table of four should pull the house interior into the director cut"
+  doAssert sawInsetOverhang, "the house interior needs its overhang too"
+  # The inset is placed in viewport coordinates, so it has to be
+  # centered on the viewport the frame declared, not on the map. When
+  # those differed the house view sat off to one side.
+  doAssert viewportW > 0, "the director cut should declare a viewport"
+  let homeWidth = sim.homeMapWidth()
+  doAssert insetX == max(0, (viewportW - homeWidth) div 2),
+    "the house interior should be centered in the shot: inset at " &
+      $insetX & " for a " & $viewportW & "-wide shot of a " &
+      $homeWidth & "-wide house"
+
 echo "All tests passed"

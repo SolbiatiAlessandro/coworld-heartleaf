@@ -21,7 +21,7 @@ const
   DefaultMaxTicks = 0
   DefaultMaxGames = 0
   MainMapIndex = 0
-  HomeMapIndexBase = 1
+  HomeMapIndexBase* = 1
   DefaultSoulTimeoutSeconds* = 150
   CogamePlayerFailureUriEnv = "COGAME_PLAYER_FAILURE_URI"
   LogCursorPrefix = "log-cursor "
@@ -287,8 +287,8 @@ const
   HouseGnomeObjectBase = 21_000
   HouseGnomeBorderObjectBase = 21_100
   PlayerBorderObjectId = 21_200
-  InsetBottomObjectId = 21_300
-  InsetOverhangObjectId = 21_301
+  InsetBottomObjectId* = 21_300
+  InsetOverhangObjectId* = 21_301
   InsetPlayerObjectBase = 21_400
   HouseGnomeZ = 20_500
   HouseGnomeLift = 12
@@ -381,7 +381,7 @@ const
   TintValueScales = [0.86, 0.70, 0.54, 0.39, 0.25]
 
 type
-  Direction = enum
+  Direction* = enum
     DirDown
     DirUp
     DirRight
@@ -2318,7 +2318,7 @@ proc playerAtHomeExit(sim: SimServer, player: Player): bool =
     player.playerFootY()
   )
 
-proc teleportPlayer(
+proc teleportPlayer*(
   sim: SimServer,
   playerIndex,
   mapIndex,
@@ -5119,6 +5119,10 @@ proc replayChatAudience*(sim: SimServer, speakerSlot: int): seq[int] =
     if slot != speakerSlot and sim.replayChatVisibleTo(speaker, viewer):
       result.add(slot)
 
+proc homeMapWidth*(sim: SimServer): int =
+  ## Width of a house interior, for callers placing it over a view.
+  sim.homeMaps[0].width
+
 proc playerMapIndex*(sim: SimServer, playerIndex: int): int =
   ## The map one player is on: 0 outdoors, 1..9 inside that house.
   sim.players[playerIndex].mapIndex
@@ -5992,6 +5996,11 @@ proc drainReplayViewerInput(
 proc newReplayViewerState*(): PlayerViewerState =
   ## Creates one replay viewer state with nothing selected.
   PlayerViewerState(selectedPlayerIndex: -1)
+
+proc newDirectorViewerState*(): PlayerViewerState =
+  ## Creates one viewer state watching the director cut, the way every
+  ## viewer route does.
+  PlayerViewerState(selectedPlayerIndex: -1, directorMode: true)
 
 proc handleReplayViewerPacket*(state: PlayerViewerState, data: string) =
   ## Applies one raw sprite-client packet from a local viewer: the
