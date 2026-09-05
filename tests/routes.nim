@@ -29,6 +29,13 @@ const
   DirectorSockets = ["/global", "/replay", "/clients/global", "/director"]
   FixtureSeed = 4242
   FixtureTicks = 120
+  WatchSeconds = 30.0
+    ## Long enough for the init packet -- the whole map at every day
+    ## tint, tens of megabytes -- to land before the first rendered
+    ## frame is counted.
+  MapAspectNum = 16.0
+  MapAspectDen = 9.0
+  AspectTolerance = 0.01
 
 proc serverExe(): string =
   let configured = getEnv("HEARTLEAF_SERVER")
@@ -95,10 +102,43 @@ proc hasScorePanelCard(frame: string): bool =
       return true
   false
 
-proc watch(path: string, seconds: float):
-    tuple[frames: int, scorePanel: bool] =
-  ## Counts the binary frames one viewer socket receives in the window
-  ## and whether any of them carried the score-panel card.
+proc hasReplayTransport(frame: string): bool =
+  ## True when one binary frame places the replay transport row and the
+  ## scrubber. In replay server mode every viewer route is a replay
+  ## viewer, so every one of them gets the transport: a watcher on
+  ## /global or /client/global can scrub and pause exactly like one on
+  ## /replay.
+  if frame.len == 0:
+    return false
+  var sawScrubber, sawControls = false
+  for message in parseSpritePacket(frame.toOpenArrayByte(0, frame.high)):
+    if message.kind != spkObject:
+      continue
+    if message.objectDef.id == ReplayScrubberObjectId:
+      sawScrubber = true
+    if message.objectDef.id == ReplayControlsObjectId:
+      sawControls = true
+  sawScrubber and sawControls
+
+proc mapViewport(frame: string): tuple[found: bool, w, h: int] =
+  ## The map-layer viewport one binary frame declares, if any.
+  if frame.len == 0:
+    return
+  for message in parseSpritePacket(frame.toOpenArrayByte(0, frame.high)):
+    if message.kind == spkViewport and message.viewport.layer == MapLayerId:
+      return (true, message.viewport.width, message.viewport.height)
+
+proc watch(path: string, seconds: float): tuple[
+  frames: int,
+  scorePanel: bool,
+  transport: bool,
+  viewports: seq[(int, int)]
+] =
+  ## Watches one viewer socket for a window and reports what it drew.
+  ##
+  ## The window has to outlast the init packet, which carries the whole
+  ## map at every day tint and takes several seconds to arrive on a
+  ## cold socket; the first rendered frame only follows it.
   var ws = newWebSocket(WsOrigin & path)
   defer: ws.close()
   let deadline = epochTime() + seconds
@@ -109,8 +149,20 @@ proc watch(path: string, seconds: float):
     case message.get().kind
     of BinaryMessage:
       inc result.frames
-      if message.get().data.hasScorePanelCard():
+      let frame = message.get().data
+      if frame.hasScorePanelCard():
         result.scorePanel = true
+      if frame.hasReplayTransport():
+        result.transport = true
+      # Only rendered frames are shots. The init packet declares the
+      # stock viewer's own viewport once, before any frame; that one is
+      # not a director crop and must not be read as one. A rendered
+      # frame is the one carrying the score-panel card.
+      if frame.hasScorePanelCard():
+        let view = frame.mapViewport()
+        if view.found:
+          result.viewports.add((view.w, view.h))
+      if result.scorePanel and result.transport and result.viewports.len > 0:
         return
     of Ping:
       ws.send(message.get().data, Pong)
@@ -153,10 +205,30 @@ proc main() =
       path & " must no longer serve the director page"
 
   echo "Testing the viewer websockets stream the director cut"
+  echo "Testing every viewer route gets the replay transport and scrubber"
+  echo "Testing every director frame fits a 16:9 window with no black bars"
+  let mapAspect = MapAspectNum / MapAspectDen
   for path in DirectorSockets:
-    let seen = watch(path, 5.0)
+    let seen = watch(path, WatchSeconds)
     doAssert seen.frames > 0, path & " should stream at least one frame"
     doAssert seen.scorePanel, path & " should place the score-panel card"
+    # "I don't have the scrubber so I can't play/pause it": in replay
+    # server mode the transport belongs to every viewer route, not just
+    # /replay.
+    doAssert seen.transport,
+      path & " should place the replay transport row and scrubber"
+    doAssert seen.viewports.len > 0, path & " should declare a map viewport"
+    for (w, h) in seen.viewports:
+      # The client fits the declared viewport into its window. The map
+      # is 16:9 and every director crop keeps the map's aspect, so a
+      # 16:9 window fits the frame edge to edge. Any other aspect is a
+      # letterbox or a pillarbox: black bars.
+      doAssert w > 0 and h > 0,
+        path & " declared a degenerate viewport " & $w & "x" & $h
+      let aspect = w / h
+      doAssert abs(aspect - mapAspect) <= AspectTolerance,
+        path & " viewport " & $w & "x" & $h & " is " & $aspect &
+          ", not the map's " & $mapAspect & ": a 16:9 window would bar it"
 
   echo "Route tests passed"
 

@@ -301,22 +301,38 @@ proc encounterMembersAt*(
   for group in timeline.encounterGroupsAt(tick):
     result.add(group.members)
 
+const ConversationSilenceTailTicks* = 48
+  ## How long a conversation with no exit record outlives its last
+  ## spoken turn before it counts as over: about two turn gaps, so the
+  ## last line has time to be read.
+
 proc conversationSpans*(
   timeline: ConversationTimeline,
   finalTick: int
 ): seq[ConversationSpan] =
   ## Every conversation's birth and death from the records, in birth
   ## order: the events are chronological, so first-enter order keeps
-  ## same-tick births together in a stable order. A conversation that
-  ## never dissolves dies at finalTick, the recording's end. Groups
-  ## that never seated two gnomes are dropped.
+  ## same-tick births together in a stable order. Groups that never
+  ## seated two gnomes are dropped.
+  ##
+  ## Not every recording has exit rows -- a run that ends while gnomes
+  ## are still talking writes none, and some do not write them at all.
+  ## Such a conversation dies a short tail after its last spoken turn,
+  ## not at the end of the recording. Dying at the end would make every
+  ## conversation in the file overlap: the director commits to the
+  ## first one and can never be released from it, so the camera holds
+  ## one shot for the whole replay while later conversations, and the
+  ## dinner, go unwatched.
   var
     spanAt: Table[int, int]
       ## encounter id -> index into the accumulating span list.
     live: Table[int, seq[int]]
       ## Current members of each conversation that is still open.
+    lastHeard: Table[int, int]
+      ## encounter id -> tick of its last spoken turn.
   for event in timeline.events:
     if event.spokenTurn:
+      lastHeard[event.encounterId] = event.tick
       continue
     if event.enter:
       if event.encounterId in spanAt:
@@ -358,6 +374,19 @@ proc conversationSpans*(
         result[spanAt[event.encounterId]].deathTick =
           min(event.tick, finalTick)
         live.del(event.encounterId)
+  # Whatever is still open at the end of the records never wrote an
+  # exit, so close it on its own last word instead of on the file.
+  for id in live.keys:
+    let index = spanAt[id]
+    if id in lastHeard:
+      result[index].deathTick = min(
+        lastHeard[id] + ConversationSilenceTailTicks, finalTick
+      )
+    else:
+      # It never said anything; it is only a birth record.
+      result[index].deathTick = min(
+        result[index].birthTick + ConversationSilenceTailTicks, finalTick
+      )
   var kept: seq[ConversationSpan]
   for span in result:
     if span.members.len >= 2 and span.deathTick > span.birthTick:

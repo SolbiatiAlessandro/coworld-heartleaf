@@ -6,8 +6,8 @@
 position: absolute;
 width: 525px;
 height: 694px;
-left: 88px;
-top: 129px;
+left: 554px;
+top: 131px;
 
 
 
@@ -16,8 +16,8 @@ top: 129px;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 88px;
-top: 536px;
+left: 554px;
+top: 538px;
 
 background: #000000;
 
@@ -27,8 +27,8 @@ background: #000000;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 127px;
-top: 337px;
+left: 593px;
+top: 339px;
 
 background: #000000;
 
@@ -38,8 +38,8 @@ background: #000000;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 170px;
-top: 169px;
+left: 636px;
+top: 171px;
 
 background: #000000;
 
@@ -49,8 +49,8 @@ background: #000000;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 361px;
-top: 129px;
+left: 827px;
+top: 131px;
 
 background: #000000;
 
@@ -60,8 +60,8 @@ background: #000000;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 557px;
-top: 195px;
+left: 1023px;
+top: 197px;
 
 background: #000000;
 
@@ -71,8 +71,8 @@ background: #000000;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 579px;
-top: 358px;
+left: 1045px;
+top: 360px;
 
 background: #000000;
 
@@ -82,8 +82,8 @@ background: #000000;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 582px;
-top: 566px;
+left: 1048px;
+top: 568px;
 
 background: #000000;
 
@@ -93,8 +93,8 @@ background: #000000;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 222px;
-top: 799px;
+left: 688px;
+top: 801px;
 
 background: #000000;
 
@@ -104,8 +104,8 @@ background: #000000;
 position: absolute;
 width: 31px;
 height: 24px;
-left: 487px;
-top: 770px;
+left: 953px;
+top: 772px;
 
 background: #000000;
 
@@ -115,8 +115,8 @@ background: #000000;
 position: absolute;
 width: 678px;
 height: 822px;
-left: 38px;
-top: 88px;
+left: 504px;
+top: 90px;
 
 
 
@@ -125,7 +125,260 @@ top: 88px;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 588px;
+left: 1054px;
+top: 230px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 989px;
+top: 200px;
+
+background: #44FF00;
+
+
+/* market */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 753px;
+top: 375px;
+
+background: #FF0000;
+
+
+/* water */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 854px;
+top: 592px;
+
+background: #68A7FF;
+
+
+/* honey */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 811px;
+top: 704px;
+
+background: #FFD500;
+
+
+/* honey */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 965px;
+top: 298px;
+
+background: #FFD500;
+
+
+/* honey */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 683px;
+top: 640px;
+
+background: #FFD500;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 696px;
+top: 845px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 751px;
+top: 804px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 909px;
+top: 812px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 742px;
+top: 649px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 979px;
+top: 817px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 1007px;
+top: 557px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 1067px;
+top: 399px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 1052px;
+top: 899px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 771px;
+top: 903px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 549px;
+top: 747px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 536px;
+top: 713px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 504px;
+top: 375px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 563px;
+top: 406px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 531px;
+top: 390px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 734px;
+top: 90px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 952px;
+top: 116px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 880px;
 top: 228px;
 
 background: #44FF00;
@@ -136,304 +389,7 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 523px;
-top: 198px;
-
-background: #44FF00;
-
-
-/* market */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 287px;
-top: 373px;
-
-background: #FF0000;
-
-
-/* water */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 388px;
-top: 590px;
-
-background: #68A7FF;
-
-
-/* honey */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 345px;
-top: 702px;
-
-background: #FFD500;
-
-
-/* honey */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 499px;
-top: 296px;
-
-background: #FFD500;
-
-
-/* honey */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 217px;
-top: 638px;
-
-background: #FFD500;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 230px;
-top: 843px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 285px;
-top: 802px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 443px;
-top: 810px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 276px;
-top: 647px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 513px;
-top: 815px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 541px;
-top: 555px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 601px;
-top: 397px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 586px;
-top: 897px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 305px;
-top: 901px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 83px;
-top: 745px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 70px;
-top: 711px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 38px;
-top: 373px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 97px;
-top: 404px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 65px;
-top: 388px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 268px;
-top: 88px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 486px;
-top: 114px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 414px;
-top: 226px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 523px;
-top: 492px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 667px;
-top: 836px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 707px;
-top: 369px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 539px;
-top: 364px;
-
-background: #44FF00;
-
-
-/* garden */
-
-position: absolute;
-width: 9px;
-height: 9px;
-left: 424px;
+left: 989px;
 top: 494px;
 
 background: #44FF00;
@@ -444,8 +400,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 461px;
-top: 451px;
+left: 1133px;
+top: 838px;
 
 background: #44FF00;
 
@@ -455,8 +411,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 450px;
-top: 388px;
+left: 1173px;
+top: 371px;
 
 background: #44FF00;
 
@@ -466,8 +422,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 384px;
-top: 507px;
+left: 1005px;
+top: 366px;
 
 background: #44FF00;
 
@@ -477,7 +433,7 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 309px;
+left: 890px;
 top: 496px;
 
 background: #44FF00;
@@ -488,8 +444,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 264px;
-top: 451px;
+left: 927px;
+top: 453px;
 
 background: #44FF00;
 
@@ -499,8 +455,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 259px;
-top: 404px;
+left: 916px;
+top: 390px;
 
 background: #44FF00;
 
@@ -510,8 +466,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 625px;
-top: 590px;
+left: 850px;
+top: 509px;
 
 background: #44FF00;
 
@@ -521,8 +477,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 134px;
-top: 525px;
+left: 775px;
+top: 498px;
 
 background: #44FF00;
 
@@ -532,8 +488,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 192px;
-top: 349px;
+left: 730px;
+top: 453px;
 
 background: #44FF00;
 
@@ -543,8 +499,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 230px;
-top: 184px;
+left: 725px;
+top: 406px;
 
 background: #44FF00;
 
@@ -554,8 +510,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 101px;
-top: 575px;
+left: 1091px;
+top: 592px;
 
 background: #44FF00;
 
@@ -565,8 +521,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 123px;
-top: 368px;
+left: 600px;
+top: 527px;
 
 background: #44FF00;
 
@@ -576,8 +532,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 154px;
-top: 194px;
+left: 658px;
+top: 351px;
 
 background: #44FF00;
 
@@ -587,8 +543,8 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 414px;
-top: 141px;
+left: 696px;
+top: 186px;
 
 background: #44FF00;
 
@@ -598,8 +554,52 @@ background: #44FF00;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 405px;
-top: 169px;
+left: 567px;
+top: 577px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 589px;
+top: 370px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 620px;
+top: 196px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 880px;
+top: 143px;
+
+background: #44FF00;
+
+
+/* garden */
+
+position: absolute;
+width: 9px;
+height: 9px;
+left: 871px;
+top: 171px;
 
 background: #44FF00;
 
@@ -609,8 +609,8 @@ background: #44FF00;
 position: absolute;
 width: 546px;
 height: 686px;
-left: 84px;
-top: 43px;
+left: 550px;
+top: 45px;
 
 
 
@@ -619,8 +619,8 @@ top: 43px;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 226px;
-top: 676px;
+left: 692px;
+top: 678px;
 
 background: #000000;
 
@@ -630,8 +630,8 @@ background: #000000;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 565px;
-top: 720px;
+left: 1031px;
+top: 722px;
 
 background: #000000;
 
@@ -641,8 +641,8 @@ background: #000000;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 304px;
-top: 43px;
+left: 770px;
+top: 45px;
 
 background: #000000;
 
@@ -652,8 +652,8 @@ background: #000000;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 84px;
-top: 247px;
+left: 550px;
+top: 249px;
 
 background: #000000;
 
@@ -663,7 +663,7 @@ background: #000000;
 position: absolute;
 width: 9px;
 height: 9px;
-left: 621px;
-top: 109px;
+left: 1087px;
+top: 111px;
 
 background: #000000;

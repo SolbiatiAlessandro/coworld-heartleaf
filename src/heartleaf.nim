@@ -73,7 +73,7 @@ const
     ## every viewer page is the director page and every viewer socket
     ## is a director watcher.
   MaxWebSocketFrameBytes = 900_000
-  MapLayerId = 0
+  MapLayerId* = 0
   UiLayerId = 1
   ClockLayerId = 2
   GlobalPanelLayerId = 3
@@ -153,12 +153,10 @@ const
     ## outline highlight keeps the original gold.
   GlobalPanelSelectedInkG = 82'u8
   GlobalPanelSelectedInkB = 30'u8
-  DirectorMinCropHeight = 220
-    ## The tightest zoom, as a crop height in world pixels; keeps a
-    ## small circle from filling the whole screen with two gnomes.
-  DirectorMinCropWidth = 250
-    ## The tightest zoom is also never narrower than one wrapped
-    ## speech bubble with margin, so spoken lines fit the shot.
+  DirectorSubjectWidth = 260
+    ## World pixels of clear map the tightest zoom keeps between the two
+    ## card columns, so a huddle still reads as a huddle with its lines
+    ## on either side of it.
   DirectorPaddingPx = 56
     ## World pixels kept visible around the focused circle.
   DirectorTweenRate = 0.10
@@ -196,15 +194,12 @@ const
   QueueFastForwardTicks = 8
     ## Ticks per frame the conversation-queue playhead covers between
     ## conversations: a brisk automatic ~8X toward the next birth.
-  DirectorCardMarginPx = 170
-    ## Extra viewport width on each side of the director's crop. The
-    ## conversation cards live in these margins, outside the map.
   DirectorCardWidth = 158
-  DirectorFrameAspectNum = 16
-  DirectorFrameAspectDen = 9
-    ## The frame shape tall director shots widen toward, over the
-    ## backdrop, until the page reports its real window shape, so a
-    ## wide window shows forest instead of black bars.
+  DirectorCardColumnWidth = DirectorCardWidth + 8
+    ## Width reserved down each side of the director's crop for the
+    ## conversation cards. The cards sit inside the crop, over the map:
+    ## the viewport is the crop and nothing else, so there is no strip
+    ## of not-map for a window to letterbox.
   DirectorCardPad = 5
   DirectorCardGapY = 6
   DirectorCardPortraitSize = 36
@@ -235,11 +230,6 @@ const
   OverlayScoreColumns = 3
   OverlayScoreCellWidth = 104
   OverlayScoreCellHeight = 54
-  BackdropSpriteId = 30
-    ## The forest backdrop PNG drawn behind the main map in the
-    ## director view.
-  BackdropObjectId = 3
-    ## Map-layer object id for the backdrop, before the map bottom.
   BottomSpriteId = 1
   OverhangSpriteId = 2
   HomeBottomSpriteId = 4
@@ -265,8 +255,8 @@ const
   GnomeOutlineSpriteBase = 8500
   TrailDotSpriteBase = 8600
   ReplayTickObjectId = 20_400
-  ReplayScrubberObjectId = 20_401
-  ReplayControlsObjectId = 20_402
+  ReplayScrubberObjectId* = 20_401
+  ReplayControlsObjectId* = 20_402
   ReplayMismatchObjectId = 20_403
   ReplayPanelBgObjectId = 20_404
   ReplayConvObjectId = 20_405
@@ -385,8 +375,6 @@ type
   WorldMap = ref object
     width, height: int
     bottomSprite: RgbaSprite
-    backdropSprite: RgbaSprite
-      ## The forest PNG drawn behind the map in the director view.
     overhangSprite: RgbaSprite
     bottomTints: array[DayTintCount, RgbaSprite]
     overhangTints: array[DayTintCount, RgbaSprite]
@@ -577,8 +565,13 @@ type
       ## everything.
     directorCommitEncounter: int
       ## While positive, the director camera belongs to this
-      ## encounter: no dwell rotation, no tour, until the queue
-      ## releases it.
+      ## encounter: no tour until the queue releases or rotates it.
+    directorCommitFrames: int
+      ## Frames the current commitment has held the camera. Conversations
+      ## in a recording often all run at once, from morning to night; a
+      ## commitment that only ended at its conversation's death would
+      ## then hold one shot for the whole replay. After a dwell the
+      ## queue rotates to another conversation that is live right now.
 
   KeyframeState = object
     ## Dynamic simulation state stored in one replay keyframe. Static
@@ -599,9 +592,6 @@ type
     directorMode: bool
       ## A /director viewer: the automated camera picks the shot;
       ## player and house selection are ignored.
-    frameWidth, frameHeight: int
-      ## The director viewer's window size in CSS pixels, reported by
-      ## the page as an "aspect:WxH" chat message; 0 until it arrives.
     selectedPlayerIndex: int
     selectedHouseNumber: int  ## 0 = none, 1..HouseCount = house interior view
     pendingMapClick: bool
@@ -971,7 +961,6 @@ proc initSimServer*(seed = DefaultSeed, dayTicks = DayTicks): SimServer =
   result.homeResourceRects = loadResourceRects(homeResourcePath)
   result.homeResources = loadHomeResources(result.homeResourceRects)
   result.mainMap = loadWorldMap(mapPath, "Map")
-  result.mainMap.backdropSprite = loadEmoteSprite(dataRoot / "backdrop.png")
   let homeMap = loadWorldMap(homeMapPath, "Home map")
   for i in 0 ..< HouseCount:
     result.homeMaps[i] = homeMap
@@ -1742,11 +1731,6 @@ proc addSpriteProtocolInit(
       sim.mainMap.overhangTints[i],
       MainOverhangLabelPrefix & " tint " & $i
     )
-  packet.addRgbaSprite(
-    BackdropSpriteId,
-    sim.mainMap.backdropSprite,
-    "map backdrop"
-  )
   packet.addRgbaSprite(
     HomeBottomSpriteId,
     sim.homeMaps[0].bottomSprite,
@@ -2913,15 +2897,21 @@ proc addHouseInsetView(
   sim: SimServer,
   cache: var seq[SpriteCacheEntry],
   houseIndex: int,
-  offsetX = 0
+  viewWidth = 0,
+  viewHeight = 0
 ) =
-  ## Draws one house interior centered over the global map view.
-  ## offsetX shifts the inset right, for viewports wider than the map.
+  ## Draws one house interior centered over the view it overlays. The
+  ## inset is placed in viewport coordinates, so it has to be centered
+  ## on the viewport actually declared: the whole map for the global
+  ## view, the camera's crop for the director cut. Passing 0 means the
+  ## viewport is the map.
   let
     homeMap = sim.homeMaps[houseIndex]
     tintIndex = sim.dayTintIndex()
-    insetX = max(0, (sim.mainMap.width - homeMap.width) div 2) + offsetX
-    insetY = max(0, (sim.mainMap.height - homeMap.height) div 2)
+    viewW = if viewWidth > 0: viewWidth else: sim.mainMap.width
+    viewH = if viewHeight > 0: viewHeight else: sim.mainMap.height
+    insetX = max(0, (viewW - homeMap.width) div 2)
+    insetY = max(0, (viewH - homeMap.height) div 2)
     mapIndex = houseIndex.homeMapIndex()
   packet.addObject(
     InsetBottomObjectId,
@@ -2958,8 +2948,8 @@ proc addHouseInsetView(
       screenX,
       screenY,
       InsetNameZ,
-      sim.mainMap.width,
-      sim.mainMap.height
+      viewW,
+      viewH
     )
     packet.addSpeechBubble(
       sim,
@@ -2969,8 +2959,8 @@ proc addHouseInsetView(
       screenX,
       nameY,
       InsetChatZ,
-      sim.mainMap.width,
-      sim.mainMap.height,
+      viewW,
+      viewH,
       bubbleRects
     )
   packet.addObject(
@@ -3281,16 +3271,30 @@ proc updateDirectorCamera*(sim: SimServer) =
         inc occupants
     if occupants < 2:  # the party is over the moment the table empties
       sim.directorDinnerTtl = 0
+  # The dinner outranks everything: it is the one scene of the day the
+  # outdoor map cannot show, and its interior only draws over the wide
+  # shot. Recordings routinely have conversations running right through
+  # the dinner hour, so without this the camera would stay out in the
+  # village and the party would never be seen at all.
+  if sim.directorDinnerTtl > 0:
+    if sim.directorFocusActive:
+      sim.directorFocusActive = false
+      sim.directorLastFocusX = sim.directorFocusX
+      sim.directorLastFocusY = sim.directorFocusY
+      sim.directorHasLastFocus = true
+      sim.startDirectorTween()
+      echo "Director cuts to the dinner at tick ", sim.tickCount,
+        ": house ", sim.directorDinnerHouse + 1
   # A queue commitment owns the camera: the shot belongs to one
-  # conversation, addressed by its encounter id, from birth to death.
-  # No dwell rotation and no tour - the DirectorFocusDwellFrames
-  # behavior is subsumed while committed. The focus point prefers the
-  # anchored ring; before the ring anchors (members still walking into
-  # place at the birth tick) the committed span's own members give a
-  # centroid, so the glide-in starts the frame the queue commits
-  # instead of ticks later - ticks the show may not even be stepping.
-  # A briefly dispersed huddle keeps the last framing, never drops it.
-  if sim.directorCommitEncounter > 0:
+  # conversation, addressed by its encounter id, until the queue
+  # releases it or rotates to another conversation that is also live.
+  # The focus point prefers the anchored ring; before the ring anchors
+  # (members still walking into place at the birth tick) the committed
+  # span's own members give a centroid, so the glide-in starts the
+  # frame the queue commits instead of ticks later - ticks the show may
+  # not even be stepping. A briefly dispersed huddle keeps the last
+  # framing, never drops it.
+  elif sim.directorCommitEncounter > 0:
     var
       focusX = sim.directorFocusX
       focusY = sim.directorFocusY
@@ -3321,9 +3325,11 @@ proc updateDirectorCamera*(sim: SimServer) =
         sim.directorFocusActive = true
         sim.directorWideTicks = 0
         sim.directorFocusTicks = 0
+        sim.directorCommitFrames = 0
         sim.startDirectorTween()
         echo "Director commit in at tick ", sim.tickCount,
           ": encounter ", sim.directorCommitEncounter
+      inc sim.directorCommitFrames
       sim.directorFocusX = focusX
       sim.directorFocusY = focusY
       sim.directorFocusRadius = ConversationRingRadius
@@ -3408,17 +3414,29 @@ proc updateDirectorCamera*(sim: SimServer) =
     targetW = mapW
     targetH = mapH
   if sim.directorFocusActive:
-    targetH = clamp(
-      float(sim.directorFocusRadius * 2 + DirectorPaddingPx * 2),
-      float(DirectorMinCropHeight),
-      mapH
+    # The zoom is framed on width, because width is what the cards
+    # cost: a card column down each side plus clear map between them.
+    # Height follows the map's aspect, so the crop is 16:9 like the map
+    # and the client's window fits it exactly.
+    targetW = clamp(
+      float(sim.directorFocusRadius * 2 + DirectorPaddingPx * 2 +
+        DirectorCardColumnWidth * 2),
+      float(DirectorCardColumnWidth * 2 + DirectorSubjectWidth),
+      mapW
     )
-    targetW = targetH * mapW / mapH
-    if targetW < float(DirectorMinCropWidth):
-      targetW = min(float(DirectorMinCropWidth), mapW)
-      targetH = targetW * mapH / mapW
+    targetH = targetW * mapH / mapW
+    if targetH > mapH:
+      targetH = mapH
+      targetW = targetH * mapW / mapH
     targetX = clamp(float(sim.directorFocusX) - targetW / 2, 0.0, mapW - targetW)
     targetY = clamp(float(sim.directorFocusY) - targetH / 2, 0.0, mapH - targetH)
+  # Whatever picked the shot, it is only ever a window onto the map:
+  # never bigger than the map, never off its edges. A frame that showed
+  # anything outside the map would show black there.
+  targetW = clamp(targetW, 1.0, mapW)
+  targetH = clamp(targetH, 1.0, mapH)
+  targetX = clamp(targetX, 0.0, mapW - targetW)
+  targetY = clamp(targetY, 0.0, mapH - targetH)
   if sim.directorTweenLeft > 0:
     # A cut glides: the crop eases from where the glide started to the
     # target over a fixed run of frames, slow-fast-slow, and lands on
@@ -3538,14 +3556,17 @@ proc addDirectorConversationCards(
   packet: var seq[uint8],
   sim: SimServer,
   cache: var seq[SpriteCacheEntry],
-  cropX, cropY, cropW, cropH, paddedWidth, backdropPad: int
+  cropX, cropY, cropW, cropH: int
 ) =
-  ## Draws one parchment card per active spoken line, stacked in the
-  ## margins beside the map crop: speakers left of the shot's center
-  ## on the left, the rest on the right, each column centered on the
+  ## Draws one parchment card per active spoken line, stacked down the
+  ## margins of the map crop: speakers left of the shot's center on the
+  ## left, the rest on the right, each column centered on the
   ## conversation and top-to-bottom in the speakers' map order. Only
   ## the framed circle's own gnomes get a card, so a zoomed
   ## conversation shows its own voices and no other huddle's.
+  ##
+  ## The columns are inside the crop, over the map's own margin, so the
+  ## viewport never has to be widened past the map to hold them.
   let
     viewHeight = cropH
     worldCenterX = cropX + cropW div 2
@@ -3619,10 +3640,10 @@ proc addDirectorConversationCards(
     moods[heartLinkTier(links)] & sim.players[other].playerName
   for (column, columnX, topInset) in [
     # The score panel overlays the window's top left, so the left
-    # column starts below it. The columns hug the map crop, inside
-    # the backdrop-only viewport padding.
-    (left, backdropPad + 4, viewHeight div 4),
-    (right, paddedWidth - backdropPad - DirectorCardWidth - 4, 8)
+    # column starts below it. Both columns sit just inside the crop's
+    # own edges, which is where the viewport ends.
+    (left, 4, viewHeight div 4),
+    (right, cropW - DirectorCardWidth - 4, 8)
   ]:
     if column.len == 0:
       continue
@@ -3692,45 +3713,25 @@ proc addDirectorConversationCards(
 proc addDirectorWorldView(
   packet: var seq[uint8],
   sim: SimServer,
-  cache: var seq[SpriteCacheEntry],
-  frameWidth, frameHeight: int
+  cache: var seq[SpriteCacheEntry]
 ) =
   ## Appends the main map cropped to the director camera. The browser
   ## client scales the declared viewport to fit its window, so a
-  ## shrinking crop plays as a zoom. The viewport is wider than the
-  ## crop by a margin on each side, where the conversation cards live.
+  ## shrinking crop plays as a zoom.
+  ##
+  ## The viewport is exactly the crop, and the crop is always inside the
+  ## map, so every pixel the client is asked to draw is map. The map is
+  ## 16:9 and every crop keeps its aspect, so a 16:9 window fits the
+  ## viewport edge to edge: no letterbox, no pillarbox, no backdrop to
+  ## widen over. The conversation cards live in the crop's own left and
+  ## right margins, over the map, instead of beside it.
   let
     tintIndex = sim.dayTintIndex()
+    cameraX = int(sim.directorCamX)
     cameraY = int(sim.directorCamY)
     viewW = max(1, int(sim.directorCamW))
     viewH = max(1, int(sim.directorCamH))
-    (frameNum, frameDen) =
-      if frameWidth > 0 and frameHeight > 0:
-        (frameWidth, frameHeight)
-      else:
-        (DirectorFrameAspectNum, DirectorFrameAspectDen)
-    # Backdrop-only padding widens tall shots toward the frame shape,
-    # never past the backdrop's edge; the cards keep hugging the crop.
-    backdropPad = clamp(
-      (viewH * frameNum div frameDen -
-        viewW - DirectorCardMarginPx * 2) div 2,
-      0,
-      (sim.mainMap.backdropSprite.width - sim.mainMap.width) div 2
-    )
-    cameraX = int(sim.directorCamX) - DirectorCardMarginPx - backdropPad
-    paddedW = viewW + (DirectorCardMarginPx + backdropPad) * 2
-  packet.addViewport(MapLayerId, paddedW, viewH)
-  # The forest backdrop sits behind the map, centered on it, so the
-  # village reads as a clearing instead of floating on black. It
-  # shares BottomZ; its smaller y draws it before the map bottom.
-  packet.addObject(
-    BackdropObjectId,
-    -cameraX - (sim.mainMap.backdropSprite.width - sim.mainMap.width) div 2,
-    -cameraY - (sim.mainMap.backdropSprite.height - sim.mainMap.height) div 2,
-    BottomZ,
-    MapLayerId,
-    BackdropSpriteId
-  )
+  packet.addViewport(MapLayerId, viewW, viewH)
   packet.addObject(
     BottomObjectId,
     -cameraX,
@@ -3739,7 +3740,7 @@ proc addDirectorWorldView(
     MapLayerId,
     mainBottomSpriteId(tintIndex)
   )
-  packet.addGardenObjects(sim, cameraX, cameraY, paddedW, viewH)
+  packet.addGardenObjects(sim, cameraX, cameraY, viewW, viewH)
   packet.addTrailObjects(sim, cache, cameraX, cameraY)
   packet.addPlayerObjects(
     sim,
@@ -3747,7 +3748,7 @@ proc addDirectorWorldView(
     MainMapIndex,
     cameraX,
     cameraY,
-    paddedW,
+    viewW,
     viewH,
     includeBubbles = false
   )
@@ -3769,7 +3770,8 @@ proc addDirectorWorldView(
       sim,
       cache,
       sim.directorDinnerHouse,
-      offsetX = DirectorCardMarginPx
+      viewWidth = viewW,
+      viewHeight = viewH
     )
   # Cards belong to the cut: they appear only once the camera has
   # finished its glide in on a conversation, and frame that circle's
@@ -3779,12 +3781,10 @@ proc addDirectorWorldView(
     packet.addDirectorConversationCards(
       sim,
       cache,
-      int(sim.directorCamX),
+      cameraX,
       cameraY,
       viewW,
-      viewH,
-      paddedW,
-      backdropPad
+      viewH
     )
   packet.addClockObjects(sim)
 
@@ -4336,12 +4336,7 @@ proc buildGlobalPacket*(
     # camera picks the shot for everyone watching.
     nextState.pendingMapClick = false
     nextState.selectedPlayerIndex = -1
-    result.addDirectorWorldView(
-      sim,
-      nextState.spriteCache,
-      nextState.frameWidth,
-      nextState.frameHeight
-    )
+    result.addDirectorWorldView(sim, nextState.spriteCache)
     result.addGlobalScorePanel(sim, nextState.spriteCache, -1)
     if replayControls:
       result.addReplayControls(
@@ -5438,10 +5433,12 @@ proc commitConversation(
   sim.convQueueIndex = index
   sim.convQueueLast = index
   sim.convQueueCommitted = true
-  if sim.directorCommitEncounter != item.id and sim.directorFocusActive:
-    # Jumping between commitments keeps the glide grammar: the camera
-    # tweens from the old ring instead of snapping.
-    sim.startDirectorTween()
+  if sim.directorCommitEncounter != item.id:
+    sim.directorCommitFrames = 0
+    if sim.directorFocusActive:
+      # Jumping between commitments keeps the glide grammar: the camera
+      # tweens from the old ring instead of snapping.
+      sim.startDirectorTween()
   if atBirth and sim.tickCount != item.birthTick:
     replay.seekReplay(sim, item.birthTick)
   sim.directorCommitEncounter = item.id
@@ -5498,6 +5495,23 @@ proc stepConversationQueue(
   sim.convQueueFurthest = max(sim.convQueueFurthest, sim.tickCount)
   if sim.convQueueCommitted:
     let item = sim.convQueue[sim.convQueueIndex]
+    # Conversations in a recording overlap, and often all of them run
+    # the whole day. Waiting for this one to die would park the camera
+    # on it until the replay ended, so after a dwell the shot moves to
+    # another conversation that is live at this same tick. No rewind:
+    # world time keeps going, only the camera cuts.
+    if sim.tickCount < item.deathTick and
+        sim.directorCommitFrames >= DirectorFocusDwellFrames:
+      for step in 1 ..< sim.convQueue.len:
+        let candidate = (sim.convQueueIndex + step) mod sim.convQueue.len
+        let other = sim.convQueue[candidate]
+        if other.id != item.id and
+            other.birthTick <= sim.tickCount and
+            sim.tickCount < other.deathTick:
+          sim.commitConversation(replay, candidate, atBirth = false)
+          echo "Director rotates at tick ", sim.tickCount,
+            ": encounter ", other.id
+          return
     if sim.tickCount >= item.deathTick:
       # This conversation has played end-to-end.
       sim.convQueueCommitted = false
@@ -5698,19 +5712,8 @@ proc applyReplayViewerMessage(state: PlayerViewerState, data: string) =
         else:
           state.scrubbingReplay = false
     of SpriteClientChatMessage:
-      if item.text.startsWith("aspect:"):
-        # The director page reports its window shape so the shot can
-        # widen over the backdrop to that shape instead of a guess.
-        let parts = item.text[7 .. ^1].split('x')
-        if parts.len == 2:
-          try:
-            state.frameWidth = parseInt(parts[0])
-            state.frameHeight = parseInt(parts[1])
-          except ValueError:
-            discard
-      else:
-        for ch in item.text:
-          state.replayCommands.add(ch)
+      for ch in item.text:
+        state.replayCommands.add(ch)
     of SpriteClientInputMessage, SpriteClientReadyMessage,
         SpriteClientDebugSpriteMessage, SpriteClientSpritesOffMessage:
       discard
@@ -6075,20 +6078,6 @@ when not defined(emscripten):
   addEventListener("pointerup",rearm);
   addEventListener("wheel",rearm);
   setInterval(rearm,1000);
-  // Report the window shape as a chat message ("aspect:WxH"), so the
-  // server widens tall shots over the backdrop to this window instead
-  // of a guessed 16:9. Same 0x81 text packet the player entry sends.
-  var told="";
-  function tell(){
-    var t="aspect:"+viewWidth()+"x"+viewHeight();
-    if(t===told||!socket||socket.readyState!==WebSocket.OPEN)return;
-    var b=new Uint8Array(t.length+3);
-    b[0]=0x81;writeU16(b,1,t.length);
-    for(var i=0;i<t.length;i++)b[3+i]=t.charCodeAt(i);
-    sendPacket(b);told=t;
-  }
-  addEventListener("resize",function(){told="";tell();});
-  setInterval(tell,1000);
 })();</script>
 """
 

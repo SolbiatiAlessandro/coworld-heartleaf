@@ -28,3 +28,8 @@ build/
 *.dSYM/
 nim.cfg
 logs/
+
+# Recorded replays used as test fixtures live on the test-fixtures
+# branch, not here: `git checkout origin/test-fixtures -- tests/fixtures/`.
+tests/fixtures/
+__pycache__/
