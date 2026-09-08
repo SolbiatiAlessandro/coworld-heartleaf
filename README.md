@@ -192,8 +192,11 @@ MIT
 
 ### Viewer stability review
 
-The director preserves the original village and uses brown framing by default.
+The director preserves the original village and uses light parchment framing
+with the existing pixel-art wooden/leaf border by default.
 Use `?background=forest` to compare the optional forest surround (art review
-pending). Dialogue stays in the bottom parchment banner; replays retain their
-transport, while live spectators retain the historical live-only behavior.
+pending). A zoomed conversation shows its current speaker's card with portrait,
+dialogue, points and connections. The card uses reusable parts, and emojis sit
+above gnomes and names. Replays retain their transport, while live spectators
+retain the historical live-only behavior.
 See [viewer changes, validation and review limits](docs/viewer-stability.md).

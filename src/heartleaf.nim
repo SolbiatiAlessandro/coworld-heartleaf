@@ -80,6 +80,7 @@ const
   GlobalPanelLayerId = 3
   ReplayCenterBottomLayerId = 4
   ReplayMismatchLayerId = 6
+  DirectorFrameLayerId = 7
   MapLayerKind = 0
   GlobalPanelLayerKind = 1
   UiLayerKind = 3
@@ -198,6 +199,13 @@ const
     ## conversations: a brisk automatic ~8X toward the next birth.
   PanelSliceInset = 10
     ## Keep the parchment corners crisp when sizing UI panels.
+  DirectorCardWidth = 158
+  DirectorCardPad = 12
+  DirectorCardPortraitSize = 36
+  DirectorFrameSpriteId = 9300
+  DirectorCardFrameSpriteId = 9301
+  DirectorCardFaceSpriteBase = 9150
+  ViewerParchment = ColorRGBA(r: 213, g: 176, b: 114, a: 255)
   DirectorBounceHops = [2, 4, 6, 6, 5, 4, 2, 0, 2, 3, 3, 2, 1, 0]
     ## The little hop a gnome does when its new line lands, in pixels
     ## of lift per frame.
@@ -400,6 +408,11 @@ type
     portraitX: int
     nameX: int
 
+  DirectorCard = object
+    playerIndex: int
+    lines, relationLines: seq[string]
+    connections, height: int
+
   House = object
     rect: Rect
     valid: bool
@@ -452,6 +465,9 @@ type
   SimServer* = ref object
     mainMap: WorldMap
     viewerBrown: RgbaSprite
+    viewerFrame: RgbaSprite
+    viewerFrameKey: string
+    directorCardFrame: RgbaSprite
     homeMaps: array[HouseCount, WorldMap]
     resourceRects: seq[ResourceRect]
     homeResourceRects: seq[ResourceRect]
@@ -989,7 +1005,7 @@ proc ensureForestBackdrop(sim: SimServer) =
 proc initSimServer*(seed = DefaultSeed, dayTicks = DayTicks): SimServer =
   ## Initializes the Heartleaf simulation.
   result = SimServer()
-  result.viewerBrown = solidRgbaSprite(256, 256, rgba(94, 58, 22, 255))
+  result.viewerBrown = solidRgbaSprite(256, 256, ViewerParchment)
   result.dayTicks = max(TicksPerSecond, dayTicks)
   result.seatCount = HouseCount
   let dataRoot = dataDir()
@@ -2685,18 +2701,21 @@ proc heartLinkTier(links: int): int =
   clamp((links - 1) div 4, 0, 2)
 
 proc heartEmoteSprite(sim: SimServer, tier, fade: int): RgbaSprite =
-  ## The tier's emoji emote, alpha-faded for one life stage; cached.
+  ## Dissolve whole pixel blocks. Bitworld overwrites within a layer:
+  ## partial alpha would erase the map underneath and fade to black.
   let key = clamp(tier, 0, 2) * 4 + clamp(fade, 0, 3)
   if key in sim.heartEmoteFaded:
     return sim.heartEmoteFaded[key]
   let
     base = sim.heartEmoteBases[clamp(tier, 0, 2)]
-    alpha = [255, 210, 150, 80][clamp(fade, 0, 3)]
+    visible = [4, 4, 4, 2][clamp(fade, 0, 3)]
   var sprite = newRgbaSprite(base.width, base.height)
   for y in 0 ..< base.height:
     for x in 0 ..< base.width:
       var color = base.rgbaSpriteAt(x, y)
-      color.a = uint8(int(color.a) * alpha div 255)
+      const order = [[0, 2], [3, 1]]
+      if order[(y div 2) mod 2][(x div 2) mod 2] >= visible:
+        color.a = 0
       sprite.putPixel(x, y, color)
   sim.heartEmoteFaded[key] = sprite
   sprite
@@ -2778,7 +2797,27 @@ proc addHeartEmoteObjects(
         spriteId = HeartSpriteBase + clamp(tier, 0, 2) * 4 + fade
         ex = player.x + GnomeSpriteSize div 2 - sprite.width div 2 +
           int(sway)
-        ey = player.y - 10 - int(progress * HeartEmoteRise.float)
+        tagHeight = sim.textFont.height + NamePadY * 2
+      var ey = player.y - tagHeight - NameGapY - 4 - sprite.height -
+        int(progress * HeartEmoteRise.float)
+      # Anchor the icon's bottom above the name. Lift past nearby
+      # gnomes too, so an emoji cannot hide another person's face.
+      for _ in 0 ..< sim.players.len:
+        var moved = false
+        for other in sim.players:
+          if other.mapIndex != mapIndex: continue
+          let
+            tagWidth = sim.nameTagSprite(other.playerName).width
+            left = min(other.x, other.x + GnomeSpriteSize div 2 - tagWidth div 2)
+            right = max(other.x + GnomeSpriteSize,
+              other.x + GnomeSpriteSize div 2 + (tagWidth + 1) div 2)
+            top = other.y - tagHeight - NameGapY
+          if ex < right and ex + sprite.width > left and
+              ey < other.y + GnomeSpriteSize and ey + sprite.height > top - 4:
+            ey = top - 4 - sprite.height
+            moved = true
+        if not moved: break
+      let
         screenX = ex - cameraX
         screenY = ey - cameraY
       if not rectVisible(
@@ -3493,6 +3532,144 @@ proc updateDirectorCamera*(sim: SimServer) =
     sim.directorCamW += (targetW - sim.directorCamW) * DirectorTweenRate
     sim.directorCamH += (targetH - sim.directorCamH) * DirectorTweenRate
 
+proc bannerMessageLines(sim: SimServer, text: string, maxWidth: int): seq[string]
+
+proc activeDirectorCard(sim: SimServer): DirectorCard =
+  ## The line on air belongs to one gnome in the settled director shot.
+  ## Wide shots and camera travel do not show the old dialogue banner.
+  result.playerIndex = -1
+  if sim.directorTweenLeft > 0 or sim.chatFeedIndex < 0 or
+      sim.chatFeedIndex >= sim.chatFeed.len:
+    return
+  if sim.directorSceneMap == MainMapIndex and
+      (not sim.directorFocusActive or
+       sim.directorCamH >= float(sim.mainMap.height) * DirectorWideSnapRatio):
+    return
+  if not sim.chatFeedScopeMatches(sim.chatFeedIndex): return
+  let item = sim.chatFeed[sim.chatFeedIndex]
+  for i, player in sim.players:
+    if player.playerName == item.speaker.name and
+        player.mapIndex == sim.directorSceneMap:
+      result.playerIndex = i
+      break
+  if result.playerIndex < 0: return
+  let
+    player = sim.players[result.playerIndex]
+    seat = player.homeFlag - HomeMapIndexBase
+    heartPairs = if sim.conversationTimeline.events.len > 0:
+      sim.conversationTimeline.heartLinksAt(sim.tickCount) else: sim.heartLinks
+  var listener = -1
+  for hearer in item.hearers:
+    for i, candidate in sim.players:
+      if candidate.playerName == hearer.name:
+        listener = i
+        break
+    if listener >= 0: break
+  var relation = ""
+  for pair in heartPairs:
+    if pair.a == seat or pair.b == seat: result.connections += pair.links
+  if listener >= 0:
+    let otherSeat = sim.players[listener].homeFlag - HomeMapIndexBase
+    var strength = 0
+    for pair in heartPairs:
+      if (pair.a == seat and pair.b == otherSeat) or
+          (pair.b == seat and pair.a == otherSeat):
+        strength = pair.links
+        break
+    const moods = ["neutral with ", "friend with ", "best friend with "]
+    relation = moods[heartLinkTier(strength)] & sim.players[listener].playerName
+  result.lines = sim.bannerMessageLines(item.message,
+    DirectorCardWidth - DirectorCardPad * 2 - DirectorCardPortraitSize - 4)
+  result.relationLines = sim.bannerMessageLines(relation,
+    DirectorCardWidth - DirectorCardPad * 2)
+  let
+    lineHeight = sim.textFont.height + 1
+    bodyHeight = max(DirectorCardPortraitSize, (result.lines.len + 1) * lineHeight + 2)
+  result.height = max(96, bodyHeight + DirectorCardPad * 2 +
+    6 + lineHeight * (1 + result.relationLines.len))
+
+proc addDirectorFrame(
+  packet: var seq[uint8], sim: SimServer,
+  cache: var seq[SpriteCacheEntry], layout: ViewerLayout
+) =
+  ## The fixed screen frame masks map overflow during a zoom. Only
+  ## window/scene geometry rebuilds it; camera motion reuses its pixels.
+  let
+    scene = layout.scene
+    key = $layout.canvasWidth & ":" & $layout.canvasHeight & ":" & $scene
+  if sim.viewerFrameKey != key:
+    sim.viewerFrame = solidRgbaSprite(
+      layout.canvasWidth, layout.canvasHeight, ViewerParchment)
+    let border = sim.chatBanner.nineSliceSprite(
+      scene.width, scene.height, 16)
+    sim.viewerFrame.blitRgbaSprite(border, scene.x, scene.y)
+    sim.viewerFrame.fillRect(scene.x + ViewerBorder, scene.y + ViewerBorder,
+      max(0, scene.width - ViewerBorder * 2),
+      max(0, scene.height - ViewerBorder * 2), rgba(0, 0, 0, 0))
+    sim.viewerFrameKey = key
+  packet.addLayer(DirectorFrameLayerId, SpriteLayerFullScreen, 0)
+  packet.addViewport(DirectorFrameLayerId, layout.canvasWidth, layout.canvasHeight)
+  packet.addRgbaSpriteCached(cache, DirectorFrameSpriteId, sim.viewerFrame,
+    "viewer parchment frame " & key)
+  packet.addObject(47_000, 0, 0, 0, DirectorFrameLayerId, DirectorFrameSpriteId)
+
+proc addDirectorCard(
+  packet: var seq[uint8], sim: SimServer,
+  cache: var seq[SpriteCacheEntry], card: DirectorCard, rect: ViewerRect
+) =
+  ## Same single-gnome card as #35, sent as an empty frame, portrait,
+  ## rule and shared glyphs. A new line sends no whole-card image.
+  if card.playerIndex < 0: return
+  let
+    player = sim.players[card.playerIndex]
+    pad = DirectorCardPad
+    lineHeight = sim.textFont.height + 1
+    textX = rect.x + pad + DirectorCardPortraitSize + 4
+    ruleY = rect.y + card.height - pad -
+      lineHeight * (1 + card.relationLines.len) - 5
+  if sim.directorCardFrame.height != card.height:
+    sim.directorCardFrame = sim.chatBanner.nineSliceSprite(
+      DirectorCardWidth, card.height, PanelSliceInset)
+  packet.addRgbaSpriteCached(cache, DirectorCardFrameSpriteId,
+    sim.directorCardFrame, "director empty card frame " & $card.height)
+  packet.addObject(28_000, rect.x, rect.y, 1,
+    DirectorFrameLayerId, DirectorCardFrameSpriteId)
+  let source = sim.portraits[player.gnomeIndex mod sim.portraits.len]
+  var face = newRgbaSprite(DirectorCardPortraitSize, DirectorCardPortraitSize)
+  for y in 0 ..< face.height:
+    for x in 0 ..< face.width:
+      face.putPixel(x, y, source.rgbaSpriteAt(
+        x * source.width div face.width, y * source.height div face.height))
+  let faceId = DirectorCardFaceSpriteBase + player.gnomeIndex
+  packet.addRgbaSpriteCached(cache, faceId, face,
+    "director portrait " & player.playerName)
+  var hop = 0
+  if card.playerIndex < sim.directorBounce.len and
+      sim.directorBounce[card.playerIndex] > 0:
+    hop = DirectorBounceHops[DirectorBounceHops.len - sim.directorBounce[card.playerIndex]]
+  packet.addObject(28_100, rect.x + pad, rect.y + pad - hop, 2,
+    DirectorFrameLayerId, faceId)
+  var glyphSlot = 0
+  template textRun(text: string, x, y: int) =
+    block:
+      var dx = x
+      for ch in text:
+        packet.addObject(48_000 + glyphSlot, dx, y, 3,
+          DirectorFrameLayerId, ch.bannerGlyphSpriteId())
+        inc glyphSlot
+        dx += sim.textFont.glyphAdvance(ch)
+  textRun(player.playerName, textX, rect.y + pad)
+  for i, line in card.lines:
+    textRun(line, textX, rect.y + pad + (i + 1) * lineHeight + 2)
+  let rule = solidRgbaSprite(DirectorCardWidth - pad * 2, 1, rgba(178, 138, 90, 255))
+  packet.addRgbaSpriteCached(cache, 9302, rule, "director card rule")
+  packet.addObject(28_101, rect.x + pad, ruleY, 2, DirectorFrameLayerId, 9302)
+  textRun("Points: " & $player.score, rect.x + pad, ruleY + 3)
+  let connections = "Connections: " & $card.connections
+  textRun(connections, rect.x + DirectorCardWidth - pad - sim.chatTextWidth(connections), ruleY + 3)
+  for i, line in card.relationLines:
+    textRun(line, rect.x + pad, ruleY + 3 + (i + 1) * lineHeight)
+
 proc addDirectorWorldView(
   packet: var seq[uint8],
   sim: SimServer,
@@ -3500,13 +3677,18 @@ proc addDirectorWorldView(
   frameWidth, frameHeight: int,
   replayControls, forestBackdrop: bool
 ) =
-  ## World and room scenes share one fitted viewport. The existing
-  ## bottom banner owns dialogue; no world-space cards or side offsets.
+  ## World and room scenes share a framed crop and one on-air card.
   let
     tintIndex = sim.dayTintIndex()
-    layout = frameLayout(sim.directorCamX, sim.directorCamY,
-      sim.directorCamW, sim.directorCamH, frameWidth, frameHeight,
-      sim.players.len > 0, replayControls)
+    card = sim.activeDirectorCard()
+    cardHeight = if sim.directorFocusActive or sim.directorSceneMap != MainMapIndex:
+      max(96, card.height) else: 0
+    cropWidth = if forestBackdrop and not sim.directorFocusActive and
+        sim.directorSceneMap == MainMapIndex:
+      max(sim.directorCamW, sim.directorCamH * 1.5) else: sim.directorCamW
+    layout = frameLayout(sim.directorCamX - (cropWidth - sim.directorCamW) / 2,
+      sim.directorCamY, cropWidth, sim.directorCamH, frameWidth, frameHeight,
+      sim.players.len > 0, replayControls, cardHeight)
     cameraX = layout.x
     cameraY = layout.y
     mapIndex = sim.directorSceneMap
@@ -3515,7 +3697,7 @@ proc addDirectorWorldView(
   # extreme window shapes. It is sent once, independent of camera zoom.
   const BrownTileId = 31
   packet.addRgbaSpriteCached(cache, BrownTileId, sim.viewerBrown,
-    "viewer brown surround")
+    "viewer parchment surround")
   var tile = 0
   for y in countup(0, layout.height - 1, 256):
     for x in countup(0, layout.width - 1, 256):
@@ -3571,6 +3753,8 @@ proc addDirectorWorldView(
     layout.width, layout.height, includeBubbles = false)
   packet.addObject(OverhangObjectId, -cameraX, -cameraY,
     OverhangZ, MapLayerId, topId)
+  packet.addDirectorFrame(sim, cache, layout)
+  packet.addDirectorCard(sim, cache, card, layout.card)
   packet.addClockObjects(sim)
 
 proc replayCommandAt(layer, x, y: int): char =
@@ -4132,7 +4316,7 @@ proc buildGlobalPacket*(
         replayLooping,
         replayMismatchTick
       )
-    result.addChatBanner(sim, declareLayer = not replayControls)
+    # Director speech uses the single-gnome card, never the old banner.
     return
   if nextState.pendingMapClick:
     nextState.pendingMapClick = false
@@ -4867,8 +5051,20 @@ proc chatFeedScopeMatches(sim: SimServer, index: int): bool =
     return false
   if sim.directorSceneMap != MainMapIndex:
     return true
-  sim.chatFeedScope == 0 or
-    sim.chatFeed[index].encounterId == sim.chatFeedScope
+  if sim.chatFeedScope != 0:
+    return sim.chatFeed[index].encounterId == sim.chatFeedScope
+  if sim.directorFocusActive:
+    let reach = sim.directorFocusRadius + ConversationExitRadius div 2 +
+      GnomeSpriteSize div 2
+    for player in sim.players:
+      if player.playerName == sim.chatFeed[index].speaker.name and
+          player.mapIndex == MainMapIndex:
+        let
+          dx = player.playerFootX() - sim.directorFocusX
+          dy = player.playerFootY() - sim.directorFocusY
+        return dx * dx + dy * dy <= reach * reach
+    return false
+  true
 
 proc chatFeedNextIndex(sim: SimServer, fromIndex: int): int =
   ## The first feed line at or after fromIndex that the current scope
