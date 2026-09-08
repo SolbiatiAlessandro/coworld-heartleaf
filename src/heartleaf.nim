@@ -5,6 +5,7 @@ import
   bitworld/resources, bitworld/sprites,
   heartleaf/common, heartleaf/protocol, heartleaf/souls,
   heartleaf/observation, heartleaf/navigation, heartleaf/encounters,
+  heartleaf/viewer_layout, heartleaf/pixel_emotes,
   replays
 
 when not defined(emscripten):
@@ -61,8 +62,8 @@ const
     "/",
     GlobalWebSocketPath,
     DirectorWebSocketPath,
-    bitworldClient.GlobalClientRoute,
-    bitworldClient.CoworldGlobalClientRoute
+    "/client/global",
+    "/clients/global"
   ]
     ## Every live-viewer page and websocket path serves the director
     ## cut. The Softmax platform opens `/client/global` and probes the
@@ -187,8 +188,7 @@ const
     ## Viewer frames an inferred ring outlives the last spoken line,
     ## bridging the quiet beats between lines of one conversation.
   DirectorDinnerHoldFrames = 240
-    ## Viewer frames the director keeps showing a house interior after
-    ## the last line spoken at the table; dinner talk paces slowly.
+    ## Viewer frames per room before rotating to the next eligible party.
   DirectorShowFrames = 5
     ## While the director is on a conversation at 1X, the replay slows
     ## to one tick every five frames - lines recorded 24 ticks apart
@@ -196,31 +196,8 @@ const
   QueueFastForwardTicks = 8
     ## Ticks per frame the conversation-queue playhead covers between
     ## conversations: a brisk automatic ~8X toward the next birth.
-  DirectorCardMarginPx = 170
-    ## Extra viewport width on each side of the director's crop. The
-    ## conversation cards live in these margins, outside the map.
-  DirectorCardWidth = 158
-  DirectorFrameAspectNum = 16
-  DirectorFrameAspectDen = 9
-    ## The frame shape tall director shots widen toward, over the
-    ## backdrop, until the page reports its real window shape, so a
-    ## wide window shows forest instead of black bars.
-  DirectorCardPad = 5
-  DirectorCardGapY = 6
-  DirectorCardPortraitSize = 36
-    ## Card faces are the banner portraits downscaled to about this.
-  DirectorCardZ = 32_000
-  DirectorCardSpriteBase = 9100
-  DirectorCardObjectBase = 28_000
-    ## Clear of HeartObjectBase (27_000..): the heart emotes ride the
-    ## same packets as the cards in the director view.
-  DirectorCardSliceInset = 10
-    ## Corner size kept crisp when the chat banner's leafy frame is
-    ## nine-sliced onto a conversation card.
-  DirectorCardInnerPad = DirectorCardPad + 4
-    ## Content padding inside a card's leafy frame.
-  DirectorCardFaceSpriteBase = 9150
-  DirectorCardFaceObjectBase = 28_100
+  PanelSliceInset = 10
+    ## Keep the parchment corners crisp when sizing UI panels.
   DirectorBounceHops = [2, 4, 6, 6, 5, 4, 2, 0, 2, 3, 3, 2, 1, 0]
     ## The little hop a gnome does when its new line lands, in pixels
     ## of lift per frame.
@@ -235,11 +212,6 @@ const
   OverlayScoreColumns = 3
   OverlayScoreCellWidth = 104
   OverlayScoreCellHeight = 54
-  BackdropSpriteId = 30
-    ## The forest backdrop PNG drawn behind the main map in the
-    ## director view.
-  BackdropObjectId = 3
-    ## Map-layer object id for the backdrop, before the map bottom.
   BottomSpriteId = 1
   OverhangSpriteId = 2
   HomeBottomSpriteId = 4
@@ -319,7 +291,7 @@ const
   ChatBannerObjectId = 25_000
   ChatBannerPortraitObjectBase = 25_001
   ChatBannerGlyphObjectBase = 25_010
-  ChatBannerMaxGlyphs = 160
+  ChatBannerMaxGlyphs = 256
   ChatBannerBgZ = 0
   ChatBannerPortraitZ = 1
   ChatBannerGlyphZ = 2
@@ -330,7 +302,7 @@ const
     ## Wall-clock hold for one delay-chat banner line, independent of
     ## sim speed and of whether the viewer runs at 24 or 60 fps.
   ChatFeedMaxItems = 400
-  ChatBannerMaxHearers = 3
+  ChatBannerMaxHearers = 1
   ChatBannerNameGap = 10
   PortraitGridColumns = 3
   ChatBannerPortraitMargin = 10
@@ -386,6 +358,8 @@ type
     width, height: int
     bottomSprite: RgbaSprite
     backdropSprite: RgbaSprite
+    backdropTints: array[DayTintCount, RgbaSprite]
+    forestFrame: array[DayTintCount + 1, RgbaSprite]
       ## The forest PNG drawn behind the map in the director view.
     overhangSprite: RgbaSprite
     bottomTints: array[DayTintCount, RgbaSprite]
@@ -412,6 +386,7 @@ type
     gnomeIndex: int
 
   ChatFeedItem = object
+    mapIndex: int
     speaker: ChatFeedPerson
     hearers: seq[ChatFeedPerson]
     message: string
@@ -476,6 +451,7 @@ type
 
   SimServer* = ref object
     mainMap: WorldMap
+    viewerBrown: RgbaSprite
     homeMaps: array[HouseCount, WorldMap]
     resourceRects: seq[ResourceRect]
     homeResourceRects: seq[ResourceRect]
@@ -538,8 +514,11 @@ type
       ## conversations instead of returning to the same ring.
     directorDinnerHouse: int
     directorDinnerTtl: int
-      ## While positive, the director overlays this house's interior:
-      ## a dinner party is talking indoors, where the map shows nothing.
+      ## Frames remaining in the current room's turn in the party tour.
+    directorSceneMap: int
+      ## Scene being framed: outdoors or a house interior.
+    directorShowAccum: int
+      ## Shared replay presentation pacing for native and static viewers.
     directorBounce: seq[int]
       ## Frames left of the hop a gnome does when its new line lands.
     directorLastMessages: seq[string]
@@ -602,6 +581,8 @@ type
     frameWidth, frameHeight: int
       ## The director viewer's window size in CSS pixels, reported by
       ## the page as an "aspect:WxH" chat message; 0 until it arrives.
+    forestBackdrop: bool
+      ## Optional forest comparison; brown framing is the default.
     selectedPlayerIndex: int
     selectedHouseNumber: int  ## 0 = none, 1..HouseCount = house interior view
     pendingMapClick: bool
@@ -692,6 +673,9 @@ proc addSpriteProtocolInit(
   globalPanel = false
 )
 proc flippedHorizontal(sprite: RgbaSprite): RgbaSprite
+proc chatFeedScopeMatches(sim: SimServer, index: int): bool
+proc homeHostIndex(sim: SimServer, mapIndex: int): int
+proc homeVisitors(sim: SimServer, mapIndex, hostIndex: int): seq[int]
 proc conversationRingSprite(phase: int): RgbaSprite
 
 proc dataDir(): string =
@@ -778,6 +762,29 @@ proc loadWalkMask(walkImage: Image): seq[bool] =
     for x in 0 ..< walkImage.width:
       result[y * walkImage.width + x] = walkImage[x, y].a > 0
 
+proc clearRoomExterior(sprite: var RgbaSprite) =
+  ## The room's near-black matte is edge connected. Treat only that
+  ## exact color as transparent, retaining dark details inside walls.
+  let matte = sprite.rgbaSpriteAt(0, 0)
+  if matte.a == 0: return
+  var pending: seq[tuple[x, y: int]]
+  for x in 0 ..< sprite.width:
+    pending.add((x, 0))
+    pending.add((x, sprite.height - 1))
+  for y in 0 ..< sprite.height:
+    pending.add((0, y))
+    pending.add((sprite.width - 1, y))
+  while pending.len > 0:
+    let (x, y) = pending.pop()
+    if x < 0 or y < 0 or x >= sprite.width or y >= sprite.height:
+      continue
+    if sprite.rgbaSpriteAt(x, y) != matte: continue
+    sprite.putPixel(x, y, rgba(0, 0, 0, 0))
+    pending.add((x - 1, y))
+    pending.add((x + 1, y))
+    pending.add((x, y - 1))
+    pending.add((x, y + 1))
+
 proc loadWorldMap(path, label: string): WorldMap =
   ## Loads one layered map with bottom, walkable, and overhang data.
   result = WorldMap()
@@ -805,6 +812,9 @@ proc loadWorldMap(path, label: string): WorldMap =
       aseprite.layerImage(overhangLayer).imageRgbaSprite()
     else:
       transparentRgbaSprite(result.width, result.height)
+  if label == "Home map":
+    result.bottomSprite.clearRoomExterior()
+    result.overhangSprite.clearRoomExterior()
   for i in 0 ..< DayTintCount:
     result.bottomTints[i] = result.bottomSprite.hsvTinted(
       TintHueTargets[i],
@@ -951,9 +961,35 @@ proc loadPortraits(dataRoot: string): seq[RgbaSprite] =
       cellSize
     ))
 
+proc ensureForestBackdrop(sim: SimServer) =
+  ## Load comparison art only when a viewer selects it. Replay
+  ## keyframe builders and the default brown view need no forest copy.
+  if sim.mainMap.backdropSprite.width > 0: return
+  let dataRoot = dataDir()
+  sim.mainMap.backdropSprite = loadEmoteSprite(dataRoot / "forest.png")
+  for i in 0 ..< DayTintCount:
+    sim.mainMap.backdropTints[i] = sim.mainMap.backdropSprite.hsvTinted(
+      TintHueTargets[i], TintHueMixes[i], TintSaturationScales[i], TintValueScales[i]
+    )
+  # The repair frame keeps the original surround's proportions. Map
+  # pixels cover its central placeholder. Nearest sampling retains the
+  # pixel-art edge when adapting the generated texture's resolution.
+  let forestFrameImage = readImage(dataRoot / "forest-frame.png")
+  var forestFrame = newRgbaSprite(1676, 1069)
+  for y in 0 ..< forestFrame.height:
+    for x in 0 ..< forestFrame.width:
+      forestFrame.putPixel(x, y, forestFrameImage[
+        x * forestFrameImage.width div forestFrame.width,
+        y * forestFrameImage.height div forestFrame.height])
+  sim.mainMap.forestFrame[DayTintCount] = forestFrame
+  for i in 0 ..< DayTintCount:
+    sim.mainMap.forestFrame[i] = forestFrame.hsvTinted(
+      TintHueTargets[i], TintHueMixes[i], TintSaturationScales[i], TintValueScales[i])
+
 proc initSimServer*(seed = DefaultSeed, dayTicks = DayTicks): SimServer =
   ## Initializes the Heartleaf simulation.
   result = SimServer()
+  result.viewerBrown = solidRgbaSprite(256, 256, rgba(94, 58, 22, 255))
   result.dayTicks = max(TicksPerSecond, dayTicks)
   result.seatCount = HouseCount
   let dataRoot = dataDir()
@@ -971,7 +1007,6 @@ proc initSimServer*(seed = DefaultSeed, dayTicks = DayTicks): SimServer =
   result.homeResourceRects = loadResourceRects(homeResourcePath)
   result.homeResources = loadHomeResources(result.homeResourceRects)
   result.mainMap = loadWorldMap(mapPath, "Map")
-  result.mainMap.backdropSprite = loadEmoteSprite(dataRoot / "backdrop.png")
   let homeMap = loadWorldMap(homeMapPath, "Home map")
   for i in 0 ..< HouseCount:
     result.homeMaps[i] = homeMap
@@ -984,8 +1019,7 @@ proc initSimServer*(seed = DefaultSeed, dayTicks = DayTicks): SimServer =
   result.textFont = readPixelFont(tiny5Path)
   result.chatBanner = loadChatBanner(dataRoot / "chatbanner.aseprite")
   for tier in 0 ..< 3:
-    result.heartEmoteBases[tier] =
-      loadEmoteSprite(dataRoot / ("emote_tier" & $tier & ".png"))
+    result.heartEmoteBases[tier] = pixelEmote(tier)
   result.portraits = loadPortraits(dataRoot)
   result.conversationAnchors = initTable[int, ConversationAnchor]()
   result.chatFeedIndex = -1
@@ -1363,7 +1397,7 @@ proc addGlobalScorePanel(
   var card: RgbaSprite
   if sim.chatBanner.width > 0:
     card = sim.chatBanner.nineSliceSprite(
-      cardWidth, cardHeight, DirectorCardSliceInset
+      cardWidth, cardHeight, PanelSliceInset
     )
   else:
     card = newRgbaSprite(cardWidth, cardHeight)
@@ -1742,11 +1776,6 @@ proc addSpriteProtocolInit(
       sim.mainMap.overhangTints[i],
       MainOverhangLabelPrefix & " tint " & $i
     )
-  packet.addRgbaSprite(
-    BackdropSpriteId,
-    sim.mainMap.backdropSprite,
-    "map backdrop"
-  )
   packet.addRgbaSprite(
     HomeBottomSpriteId,
     sim.homeMaps[0].bottomSprite,
@@ -2642,11 +2671,12 @@ proc cliLoadReplayPath(): string =
 
 proc heartNoise(a, b, c: int): float =
   ## Deterministic hash noise in -1.0 .. 1.0, stable across replays.
-  var h = a * 73856093 xor b * 19349663 xor c * 83492791
+  var h = uint32(a) * 73856093'u32 xor
+    uint32(b) * 19349663'u32 xor uint32(c) * 83492791'u32
   h = h xor (h shr 13)
-  h = h *% 1274126177
+  h = h * 1274126177'u32
   h = h xor (h shr 16)
-  float((h and 1023) - 512) / 512.0
+  float(int(h and 1023) - 512) / 512.0
 
 proc heartLinkTier(links: int): int =
   ## Maps one pair's conversation history to an emote tier: a neutral
@@ -3254,33 +3284,53 @@ proc updateDirectorCamera*(sim: SimServer) =
       sim.directorBounce[i] = DirectorBounceHops.len
     elif sim.directorBounce[i] > 0:
       dec sim.directorBounce[i]
-  # A dinner party happens indoors, where the outdoor map shows
-  # nothing: track the busiest house holding a real gathering so the
-  # view can overlay its interior.
-  var
-    dinnerHouse = -1
-    dinnerCount = 0
+  # Use the game's dinner eligibility: a host at home and at least
+  # one guest. Rotate eligible rooms, giving each a bounded turn.
+  var dinnerHouses: seq[int]
   for houseIndex in 0 ..< HouseCount:
-    if not sim.houses[houseIndex].valid:
-      continue
-    var occupants = 0
-    for player in sim.players:
-      if player.mapIndex == HomeMapIndexBase + houseIndex:
-        inc occupants
-    if occupants >= 3 and occupants > dinnerCount:
-      dinnerCount = occupants
-      dinnerHouse = houseIndex
-  if dinnerHouse >= 0:
-    sim.directorDinnerHouse = dinnerHouse
-    sim.directorDinnerTtl = DirectorDinnerHoldFrames
-  elif sim.directorDinnerTtl > 0:
+    let mapIndex = HomeMapIndexBase + houseIndex
+    let host = sim.homeHostIndex(mapIndex)
+    if host >= 0 and sim.players[host].mapIndex == mapIndex and
+        sim.homeVisitors(mapIndex, host).len > 0:
+      dinnerHouses.add(houseIndex)
+  if dinnerHouses.len > 0:
+    if sim.directorDinnerTtl <= 0 or
+        sim.directorDinnerHouse notin dinnerHouses:
+      var next = dinnerHouses[0]
+      for i, house in dinnerHouses:
+        if house == sim.directorDinnerHouse:
+          next = dinnerHouses[(i + 1) mod dinnerHouses.len]
+          break
+      sim.directorDinnerHouse = next
+      sim.directorDinnerTtl = DirectorDinnerHoldFrames
     dec sim.directorDinnerTtl
-    var occupants = 0
-    for player in sim.players:
-      if player.mapIndex == HomeMapIndexBase + sim.directorDinnerHouse:
-        inc occupants
-    if occupants < 2:  # the party is over the moment the table empties
-      sim.directorDinnerTtl = 0
+    let
+      mapIndex = HomeMapIndexBase + sim.directorDinnerHouse
+      room = sim.homeMaps[sim.directorDinnerHouse]
+    if sim.directorSceneMap != mapIndex:
+      # Rooms have their own coordinates. Cut to the room, then zoom;
+      # never interpolate across unrelated outdoor coordinates.
+      sim.directorSceneMap = mapIndex
+      sim.directorCamX = -float(room.width) * 0.15
+      sim.directorCamY = -float(room.height) * 0.15
+      sim.directorCamW = float(room.width) * 1.3
+      sim.directorCamH = float(room.height) * 1.3
+      sim.directorTweenLeft = 0
+      sim.chatFeedIndex = -1
+    sim.directorCamX *= 1.0 - DirectorTweenRate
+    sim.directorCamY *= 1.0 - DirectorTweenRate
+    sim.directorCamW += (float(room.width) - sim.directorCamW) * DirectorTweenRate
+    sim.directorCamH += (float(room.height) - sim.directorCamH) * DirectorTweenRate
+    return
+  sim.directorDinnerTtl = 0
+  if sim.directorSceneMap != MainMapIndex:
+    sim.directorSceneMap = MainMapIndex
+    sim.directorCamX = 0
+    sim.directorCamY = 0
+    sim.directorCamW = mapW
+    sim.directorCamH = mapH
+    sim.directorFocusActive = false
+    sim.directorTweenLeft = 0
   # A queue commitment owns the camera: the shot belongs to one
   # conversation, addressed by its encounter id, from birth to death.
   # No dwell rotation and no tour - the DirectorFocusDwellFrames
@@ -3443,349 +3493,84 @@ proc updateDirectorCamera*(sim: SimServer) =
     sim.directorCamW += (targetW - sim.directorCamW) * DirectorTweenRate
     sim.directorCamH += (targetH - sim.directorCamH) * DirectorTweenRate
 
-proc wrapCardLines(sim: SimServer, text: string, maxWidth: int): seq[string] =
-  ## Word-wraps one spoken line to a pixel width in the Tiny5 font.
-  var line = ""
-  for word in text.split(' '):
-    let candidate =
-      if line.len == 0:
-        word
-      else:
-        line & " " & word
-    if line.len == 0 or sim.chatTextWidth(candidate) <= maxWidth:
-      line = candidate
-    else:
-      result.add(line)
-      line = word
-  if line.len > 0:
-    result.add(line)
-
-proc cardPortraitSprite(sim: SimServer, gnomeIndex: int): RgbaSprite =
-  ## The banner portrait downscaled for one conversation card.
-  if sim.portraits.len == 0:
-    return newRgbaSprite(DirectorCardPortraitSize, DirectorCardPortraitSize)
-  let
-    source = sim.portraits[gnomeIndex mod sim.portraits.len]
-    step = max(1, source.width div DirectorCardPortraitSize)
-  result = newRgbaSprite(source.width div step, source.height div step)
-  for y in 0 ..< result.height:
-    for x in 0 ..< result.width:
-      result.putPixel(x, y, source.rgbaSpriteAt(x * step, y * step))
-
-proc directorCardSprite(
-  sim: SimServer,
-  player: Player,
-  relation: string,
-  connections: int,
-  portrait: RgbaSprite
-): RgbaSprite =
-  ## One conversation card for the director cut, framed like the chat
-  ## banner: the speaker's name beside their full spoken line, then a
-  ## ruled footer with their points, connections, and the relation to
-  ## their listener. The face is a separate object over the reserved
-  ## left area, so it can hop when the line is new.
-  let
-    nameInk = rgba(94, 58, 22, 255)
-    textInk = rgba(ChatBannerInkR, ChatBannerInkG, ChatBannerInkB, 255)
-    relationInk = rgba(158, 116, 66, 255)
-    ruleInk = rgba(178, 138, 90, 255)
-    pad = DirectorCardInnerPad
-    textX = pad + portrait.width + 4
-    textWidth = DirectorCardWidth - textX - pad
-    lines = sim.wrapCardLines(player.message, textWidth)
-    lineHeight = sim.textFont.height + 1
-    bodyHeight = max(portrait.height, (lines.len + 1) * lineHeight + 2)
-    relationHeight =
-      if relation.len > 0:
-        lineHeight + 1
-      else:
-        0
-    footerHeight = 5 + lineHeight + relationHeight
-    height = bodyHeight + footerHeight + pad * 2
-    pointsText = "Points: " & $player.score
-    connectionsText = "Connections: " & $connections
-    ruleY = pad + bodyHeight + 2
-    statsY = ruleY + 3
-  if sim.chatBanner.width > 0:
-    result = sim.chatBanner.nineSliceSprite(
-      DirectorCardWidth, height, DirectorCardSliceInset
-    )
-  else:
-    result = newRgbaSprite(DirectorCardWidth, height)
-    result.fillRect(0, 0, DirectorCardWidth, height, rgba(233, 213, 170, 245))
-  sim.blitTinyText(result, player.playerName, textX, pad, nameInk)
-  for i, line in lines:
-    sim.blitTinyText(
-      result,
-      line,
-      textX,
-      pad + (i + 1) * lineHeight + 2,
-      textInk
-    )
-  result.fillRect(pad, ruleY, DirectorCardWidth - pad * 2, 1, ruleInk)
-  sim.blitTinyText(result, pointsText, pad, statsY, textInk)
-  sim.blitTinyText(
-    result,
-    connectionsText,
-    DirectorCardWidth - pad - sim.chatTextWidth(connectionsText),
-    statsY,
-    textInk
-  )
-  if relation.len > 0:
-    sim.blitTinyText(result, relation, pad, statsY + lineHeight + 1, relationInk)
-
-proc addDirectorConversationCards(
-  packet: var seq[uint8],
-  sim: SimServer,
-  cache: var seq[SpriteCacheEntry],
-  cropX, cropY, cropW, cropH, paddedWidth, backdropPad: int
-) =
-  ## Draws one parchment card per active spoken line, stacked in the
-  ## margins beside the map crop: speakers left of the shot's center
-  ## on the left, the rest on the right, each column centered on the
-  ## conversation and top-to-bottom in the speakers' map order. Only
-  ## the framed circle's own gnomes get a card, so a zoomed
-  ## conversation shows its own voices and no other huddle's.
-  let
-    viewHeight = cropH
-    worldCenterX = cropX + cropW div 2
-    reach = sim.directorFocusRadius + ConversationExitRadius div 2 +
-      GnomeSpriteSize div 2
-  var left, right, speakers: seq[int]
-  for i, player in sim.players:
-    if player.mapIndex != MainMapIndex:
-      continue
-    if player.message.len == 0 or player.messageTicks <= 0:
-      continue
-    if player.x + GnomeSpriteSize <= cropX or player.x >= cropX + cropW or
-        player.y + GnomeSpriteSize <= cropY or player.y >= cropY + cropH:
-      continue
-    let
-      dx = player.playerFootX() - sim.directorFocusX
-      dy = player.playerFootY() - sim.directorFocusY
-    if dx * dx + dy * dy > reach * reach:
-      continue
-    speakers.add(i)
-    if player.x < worldCenterX:
-      left.add(i)
-    else:
-      right.add(i)
-  if speakers.len == 0:
-    return
-  # The heart ledger: pair strengths keyed by house seat, folded from
-  # the conversation records in a replay or the live encounter book.
-  let heartPairs =
-    if sim.conversationTimeline.events.len > 0:
-      sim.conversationTimeline.heartLinksAt(sim.tickCount)
-    else:
-      sim.heartLinks
-  proc houseOf(i: int): int =
-    sim.players[i].homeFlag - HomeMapIndexBase
-  proc connectionPoints(i: int): int =
-    ## The speaker's connection points: turns spent together, summed
-    ## across every partner.
-    let house = houseOf(i)
-    for pair in heartPairs:
-      if pair.a == house or pair.b == house:
-        result += pair.links
-  proc relationLabel(i: int): string =
-    ## The tier toward the nearest other speaker, from the pair's
-    ## strength in the ledger.
-    var
-      other = -1
-      best = high(int)
-    for j in speakers:
-      if j == i:
-        continue
-      let
-        dx = sim.players[j].x - sim.players[i].x
-        dy = sim.players[j].y - sim.players[i].y
-        dist = dx * dx + dy * dy
-      if dist < best:
-        best = dist
-        other = j
-    if other < 0:
-      return ""
-    let
-      myHouse = houseOf(i)
-      otherHouse = houseOf(other)
-    var links = 0
-    for pair in heartPairs:
-      if (pair.a == myHouse and pair.b == otherHouse) or
-          (pair.a == otherHouse and pair.b == myHouse):
-        links = pair.links
-        break
-    const moods = ["neutral with ", "friend with ", "best friend with "]
-    moods[heartLinkTier(links)] & sim.players[other].playerName
-  for (column, columnX, topInset) in [
-    # The score panel overlays the window's top left, so the left
-    # column starts below it. The columns hug the map crop, inside
-    # the backdrop-only viewport padding.
-    (left, backdropPad + 4, viewHeight div 4),
-    (right, paddedWidth - backdropPad - DirectorCardWidth - 4, 8)
-  ]:
-    if column.len == 0:
-      continue
-    var
-      sprites: seq[RgbaSprite]
-      faces: seq[RgbaSprite]
-      relations: seq[string]
-      totalHeight = -DirectorCardGapY
-    for i in column:
-      let
-        relation = relationLabel(i)
-        face = sim.cardPortraitSprite(sim.players[i].gnomeIndex)
-      relations.add(relation)
-      faces.add(face)
-      let sprite = sim.directorCardSprite(
-        sim.players[i], relation, connectionPoints(i), face
-      )
-      sprites.add(sprite)
-      totalHeight += sprite.height + DirectorCardGapY
-    # The delay-chat banner overlays the window's bottom edge; keep
-    # the columns clear of it.
-    let bottomLimit = viewHeight - viewHeight div 6
-    var y = max(topInset, (viewHeight - totalHeight) div 2)
-    for slot, i in column:
-      let sprite = sprites[slot]
-      if y + sprite.height > bottomLimit and slot > 0:
-        break  # the column is full; later cards wait their turn
-      packet.addRgbaSpriteCached(
-        cache,
-        DirectorCardSpriteBase + i,
-        sprite,
-        "director card " & $i & " " & $sim.players[i].score & " " &
-          $connectionPoints(i) & " " & relations[slot] & " " &
-          sim.players[i].message
-      )
-      packet.addObject(
-        DirectorCardObjectBase + i,
-        columnX,
-        y,
-        DirectorCardZ,
-        MapLayerId,
-        DirectorCardSpriteBase + i
-      )
-      # The face rides over the card as its own object so it can hop
-      # when the line is new.
-      var hop = 0
-      if i < sim.directorBounce.len and sim.directorBounce[i] > 0:
-        hop =
-          DirectorBounceHops[DirectorBounceHops.len - sim.directorBounce[i]]
-      let gnomeIndex = sim.players[i].gnomeIndex
-      packet.addRgbaSpriteCached(
-        cache,
-        DirectorCardFaceSpriteBase + gnomeIndex,
-        faces[slot],
-        "director card face " & $gnomeIndex
-      )
-      packet.addObject(
-        DirectorCardFaceObjectBase + i,
-        columnX + DirectorCardInnerPad,
-        y + DirectorCardInnerPad - hop,
-        DirectorCardZ + 1,
-        MapLayerId,
-        DirectorCardFaceSpriteBase + gnomeIndex
-      )
-      y += sprite.height + DirectorCardGapY
-
 proc addDirectorWorldView(
   packet: var seq[uint8],
   sim: SimServer,
   cache: var seq[SpriteCacheEntry],
-  frameWidth, frameHeight: int
+  frameWidth, frameHeight: int,
+  replayControls, forestBackdrop: bool
 ) =
-  ## Appends the main map cropped to the director camera. The browser
-  ## client scales the declared viewport to fit its window, so a
-  ## shrinking crop plays as a zoom. The viewport is wider than the
-  ## crop by a margin on each side, where the conversation cards live.
+  ## World and room scenes share one fitted viewport. The existing
+  ## bottom banner owns dialogue; no world-space cards or side offsets.
   let
     tintIndex = sim.dayTintIndex()
-    cameraY = int(sim.directorCamY)
-    viewW = max(1, int(sim.directorCamW))
-    viewH = max(1, int(sim.directorCamH))
-    (frameNum, frameDen) =
-      if frameWidth > 0 and frameHeight > 0:
-        (frameWidth, frameHeight)
-      else:
-        (DirectorFrameAspectNum, DirectorFrameAspectDen)
-    # Backdrop-only padding widens tall shots toward the frame shape,
-    # never past the backdrop's edge; the cards keep hugging the crop.
-    backdropPad = clamp(
-      (viewH * frameNum div frameDen -
-        viewW - DirectorCardMarginPx * 2) div 2,
-      0,
-      (sim.mainMap.backdropSprite.width - sim.mainMap.width) div 2
-    )
-    cameraX = int(sim.directorCamX) - DirectorCardMarginPx - backdropPad
-    paddedW = viewW + (DirectorCardMarginPx + backdropPad) * 2
-  packet.addViewport(MapLayerId, paddedW, viewH)
-  # The forest backdrop sits behind the map, centered on it, so the
-  # village reads as a clearing instead of floating on black. It
-  # shares BottomZ; its smaller y draws it before the map bottom.
-  packet.addObject(
-    BackdropObjectId,
-    -cameraX - (sim.mainMap.backdropSprite.width - sim.mainMap.width) div 2,
-    -cameraY - (sim.mainMap.backdropSprite.height - sim.mainMap.height) div 2,
-    BottomZ,
-    MapLayerId,
-    BackdropSpriteId
-  )
-  packet.addObject(
-    BottomObjectId,
-    -cameraX,
-    -cameraY,
-    BottomZ,
-    MapLayerId,
-    mainBottomSpriteId(tintIndex)
-  )
-  packet.addGardenObjects(sim, cameraX, cameraY, paddedW, viewH)
-  packet.addTrailObjects(sim, cache, cameraX, cameraY)
-  packet.addPlayerObjects(
-    sim,
-    cache,
-    MainMapIndex,
-    cameraX,
-    cameraY,
-    paddedW,
-    viewH,
-    includeBubbles = false
-  )
-  packet.addHouseGnomeObjects(sim, cache, cameraX, cameraY)
-  packet.addObject(
-    OverhangObjectId,
-    -cameraX,
-    -cameraY,
-    OverhangZ,
-    MapLayerId,
-    mainOverhangSpriteId(tintIndex)
-  )
-  # A talking dinner party pulls up its house interior, but only from
-  # the wide shot: an outdoor conversation keeps the camera.
-  if sim.directorDinnerTtl > 0 and not sim.directorFocusActive and
-      sim.directorTweenLeft <= 0 and
-      sim.directorCamH >= float(sim.mainMap.height) * DirectorWideSnapRatio:
-    packet.addHouseInsetView(
-      sim,
-      cache,
-      sim.directorDinnerHouse,
-      offsetX = DirectorCardMarginPx
-    )
-  # Cards belong to the cut: they appear only once the camera has
-  # finished its glide in on a conversation, and frame that circle's
-  # speakers.
-  if sim.directorFocusActive and sim.directorTweenLeft <= 0 and
-      sim.directorCamH < float(sim.mainMap.height) * DirectorWideSnapRatio:
-    packet.addDirectorConversationCards(
-      sim,
-      cache,
-      int(sim.directorCamX),
-      cameraY,
-      viewW,
-      viewH,
-      paddedW,
-      backdropPad
-    )
+    layout = frameLayout(sim.directorCamX, sim.directorCamY,
+      sim.directorCamW, sim.directorCamH, frameWidth, frameHeight,
+      sim.players.len > 0, replayControls)
+    cameraX = layout.x
+    cameraY = layout.y
+    mapIndex = sim.directorSceneMap
+  packet.addViewport(MapLayerId, layout.width, layout.height)
+  # A reused solid tile covers the whole declared viewport, including
+  # extreme window shapes. It is sent once, independent of camera zoom.
+  const BrownTileId = 31
+  packet.addRgbaSpriteCached(cache, BrownTileId, sim.viewerBrown,
+    "viewer brown surround")
+  var tile = 0
+  for y in countup(0, layout.height - 1, 256):
+    for x in countup(0, layout.width - 1, 256):
+      packet.addObject(40_000 + tile, x, y, BottomZ,
+        MapLayerId, BrownTileId)
+      inc tile
+  if forestBackdrop and mapIndex == MainMapIndex:
+    sim.ensureForestBackdrop()
+    let
+      backdrop = if tintIndex < 0: sim.mainMap.backdropSprite
+        else: sim.mainMap.backdropTints[tintIndex]
+      spriteId = 40 + tintIndex
+      offsetX = (sim.mainMap.width - backdrop.width) div 2
+      offsetY = (sim.mainMap.height - backdrop.height) div 2
+    packet.addRgbaSpriteCached(cache, spriteId, backdrop,
+      "forest surround tint " & $tintIndex)
+    # Repeat only outside the central artwork when the window is wider
+    # than the source backdrop. Gameplay art is always drawn on top.
+    let
+      left = int(floor(float(cameraX - offsetX) / float(backdrop.width)))
+      top = int(floor(float(cameraY - offsetY) / float(backdrop.height)))
+      right = int(ceil(float(cameraX + layout.width - offsetX) / float(backdrop.width)))
+      bottom = int(ceil(float(cameraY + layout.height - offsetY) / float(backdrop.height)))
+    var index = 0
+    for ty in top .. bottom:
+      for tx in left .. right:
+        packet.addObject(44_000 + index,
+          offsetX + tx * backdrop.width - cameraX,
+          offsetY + ty * backdrop.height - cameraY,
+          BottomZ + 1, MapLayerId, spriteId)
+        inc index
+    let
+      frameIndex = if tintIndex < 0: DayTintCount else: tintIndex
+      frame = sim.mainMap.forestFrame[frameIndex]
+    packet.addRgbaSpriteCached(cache, 60 + frameIndex, frame,
+      "forest frame tint " & $tintIndex)
+    packet.addObject(46_000,
+      (sim.mainMap.width - frame.width) div 2 - cameraX,
+      (sim.mainMap.height - frame.height) div 2 - cameraY,
+      BottomZ + 2, MapLayerId, 60 + frameIndex)
+  let
+    bottomId = if mapIndex == MainMapIndex:
+      mainBottomSpriteId(tintIndex) else: homeBottomSpriteId(tintIndex)
+    topId = if mapIndex == MainMapIndex:
+      mainOverhangSpriteId(tintIndex) else: homeOverhangSpriteId(tintIndex)
+  packet.addObject(BottomObjectId, -cameraX, -cameraY,
+    BottomZ + 3, MapLayerId, bottomId)
+  if mapIndex == MainMapIndex:
+    packet.addGardenObjects(sim, cameraX, cameraY, layout.width, layout.height)
+    packet.addTrailObjects(sim, cache, cameraX, cameraY)
+    packet.addHouseGnomeObjects(sim, cache, cameraX, cameraY)
+  packet.addPlayerObjects(sim, cache, mapIndex, cameraX, cameraY,
+    layout.width, layout.height, includeBubbles = false)
+  packet.addObject(OverhangObjectId, -cameraX, -cameraY,
+    OverhangZ, MapLayerId, topId)
   packet.addClockObjects(sim)
 
 proc replayCommandAt(layer, x, y: int): char =
@@ -4015,7 +3800,7 @@ proc addReplayControls(
   var panelBg: RgbaSprite
   if sim.chatBanner.width > 0:
     panelBg = sim.chatBanner.nineSliceSprite(
-      ViewportWidth, ReplayPanelHeight, DirectorCardSliceInset
+      ViewportWidth, ReplayPanelHeight, PanelSliceInset
     )
   else:
     panelBg = newRgbaSprite(ViewportWidth, ReplayPanelHeight)
@@ -4139,16 +3924,17 @@ proc bannerMessageLines(
   ## Greedily wraps banner text into pixel-width limited lines.
   var line = ""
   for word in text.splitWhitespace():
-    let candidate =
-      if line.len == 0:
-        word
-      else:
-        line & " " & word
-    if line.len > 0 and sim.chatTextWidth(candidate) > maxWidth:
+    if line.len > 0:
+      if sim.chatTextWidth(line & " " & word) <= maxWidth:
+        line.add(" " & word)
+        continue
       result.add(line)
-      line = word
-    else:
-      line = candidate
+      line = ""
+    for ch in word:
+      if line.len > 0 and sim.chatTextWidth(line & ch) > maxWidth:
+        result.add(line)
+        line = ""
+      line.add(ch)
   if line.len > 0:
     result.add(line)
 
@@ -4157,7 +3943,7 @@ proc layoutBannerHearers(
   item: ChatFeedItem,
   bannerWidth: int
 ): seq[ChatBannerHearer] =
-  ## Packs up to three hearers from the right, spaced by names.
+  ## Show one listener, leaving room for the complete spoken line.
   var nameRight = bannerWidth - ChatBannerPortraitMargin
   for h in 0 ..< min(item.hearers.len, ChatBannerMaxHearers):
     let
@@ -4219,7 +4005,10 @@ proc addChatBanner(
   ## standalone callers declare it here instead.
   if sim.chatFeedIndex < 0 or sim.chatFeedIndex >= sim.chatFeed.len:
     return
-  if sim.chatBanner.width == 0:
+  if sim.chatBanner.width == 0 or not sim.chatFeedScopeMatches(sim.chatFeedIndex):
+    return
+  if sim.convQueue.len > 0 and not sim.convQueueCommitted and
+      sim.directorSceneMap == MainMapIndex:
     return
   let
     item = sim.chatFeed[sim.chatFeedIndex]
@@ -4227,7 +4016,6 @@ proc addChatBanner(
     originX = max(0, (ViewportWidth - banner.width) div 2)
     speakerPortrait = sim.bannerPortrait(item.speaker.gnomeIndex)
     hearers = sim.layoutBannerHearers(item, banner.width)
-    nameY = banner.height - sim.textFont.height - 2
   if declareLayer:
     packet.addLayer(
       ReplayCenterBottomLayerId,
@@ -4266,23 +4054,6 @@ proc addChatBanner(
       portraitSpriteId(hearer.gnomeIndex, false)
     )
   var glyphSlot = 0
-  packet.addBannerGlyphs(
-    sim,
-    item.speaker.name,
-    originX + ChatBannerPortraitMargin +
-      speakerPortrait.width div 2 -
-      sim.chatTextWidth(item.speaker.name) div 2,
-    nameY,
-    glyphSlot
-  )
-  for hearer in hearers:
-    packet.addBannerGlyphs(
-      sim,
-      hearer.name,
-      originX + hearer.nameX,
-      nameY,
-      glyphSlot
-    )
   var huddleLeft = banner.width - ChatBannerPortraitMargin
   for hearer in hearers:
     huddleLeft = min(huddleLeft, hearer.portraitX)
@@ -4295,9 +4066,14 @@ proc addChatBanner(
     lines = sim.bannerMessageLines(item.message, maxWidth)
     lineHeight = sim.textFont.height + 1
     blockTop = max(
-      ChatBannerPortraitY,
-      (banner.height - 8 - lines.len * lineHeight) div 2
+      ChatBannerPortraitY + lineHeight * 2,
+      (banner.height - lines.len * lineHeight) div 2
     )
+    speakerLabel = item.speaker.name & (if item.hearers.len == 1:
+      " to " & item.hearers[0].name else: "")
+  packet.addBannerGlyphs(sim, speakerLabel,
+    originX + textLeft + (maxWidth - sim.chatTextWidth(speakerLabel)) div 2,
+    ChatBannerPortraitY + 3, glyphSlot)
   for i, line in lines:
     packet.addBannerGlyphs(
       sim,
@@ -4340,7 +4116,9 @@ proc buildGlobalPacket*(
       sim,
       nextState.spriteCache,
       nextState.frameWidth,
-      nextState.frameHeight
+      nextState.frameHeight,
+      replayControls,
+      nextState.forestBackdrop
     )
     result.addGlobalScorePanel(sim, nextState.spriteCache, -1)
     if replayControls:
@@ -4354,7 +4132,7 @@ proc buildGlobalPacket*(
         replayLooping,
         replayMismatchTick
       )
-    # No delay-chat banner: the conversation cards carry the lines.
+    result.addChatBanner(sim, declareLayer = not replayControls)
     return
   if nextState.pendingMapClick:
     nextState.pendingMapClick = false
@@ -5051,6 +4829,7 @@ proc captureChatFeed(sim: SimServer) =
       else:
         -1
     var item = ChatFeedItem(
+      mapIndex: player.mapIndex,
       speaker: ChatFeedPerson(
         name: player.playerName,
         gnomeIndex: player.gnomeIndex
@@ -5084,6 +4863,10 @@ proc queueDelayChat*(sim: SimServer, speaker, message: string) =
 proc chatFeedScopeMatches(sim: SimServer, index: int): bool =
   ## Whether the feed scope admits this line. Scope zero admits every
   ## line; a committed conversation admits only its own.
+  if sim.chatFeed[index].mapIndex != sim.directorSceneMap:
+    return false
+  if sim.directorSceneMap != MainMapIndex:
+    return true
   sim.chatFeedScope == 0 or
     sim.chatFeed[index].encounterId == sim.chatFeedScope
 
@@ -5105,7 +4888,8 @@ proc advanceChatFeed*(sim: SimServer, now = epochTime()) =
   ## the committed conversation's lines and skips every other
   ## circle's: cards and the banner follow the cursor, so scoping it
   ## scopes the whole show.
-  if sim.convQueue.len > 0 and not sim.convQueueCommitted:
+  if sim.convQueue.len > 0 and not sim.convQueueCommitted and
+      sim.directorSceneMap == MainMapIndex:
     # Between queue commitments nothing airs: the wide fast-forward is
     # silent instead of narrating the skipped time, and the cursor
     # waits where it is for the next committed conversation.
@@ -5145,7 +4929,8 @@ proc advanceChatFeedNow*(sim: SimServer, now = epochTime()) =
   ## Steps the delay chat to the next line right away: the voice for
   ## the line on screen has finished, so its card leaves with it
   ## instead of lingering out the wall-clock timer.
-  if sim.convQueue.len > 0 and not sim.convQueueCommitted:
+  if sim.convQueue.len > 0 and not sim.convQueueCommitted and
+      sim.directorSceneMap == MainMapIndex:
     # Between queue commitments nothing airs; see advanceChatFeed.
     sim.chatFeedShownAt = now
     return
@@ -5675,7 +5460,7 @@ proc globalMapClickAt(data: string): tuple[hit: bool, x, y: int] =
         SpriteClientSpritesOffMessage:
       discard
 
-proc applyReplayViewerMessage(state: PlayerViewerState, data: string) =
+proc applyReplayViewerMessage(state: PlayerViewerState, data: string, playback = true) =
   ## Applies mouse and replay command input from one viewer message.
   for item in data.parseSpriteClientMessages():
     case item.kind
@@ -5704,13 +5489,16 @@ proc applyReplayViewerMessage(state: PlayerViewerState, data: string) =
         let parts = item.text[7 .. ^1].split('x')
         if parts.len == 2:
           try:
-            state.frameWidth = parseInt(parts[0])
-            state.frameHeight = parseInt(parts[1])
+            state.frameWidth = clamp(parseInt(parts[0]), 240, 7680)
+            state.frameHeight = clamp(parseInt(parts[1]), 240, 7680)
           except ValueError:
             discard
-      else:
+      elif item.text.startsWith("background:"):
+        state.forestBackdrop = item.text == "background:forest"
+      elif playback:
         for ch in item.text:
-          state.replayCommands.add(ch)
+          if state.replayCommands.len < 64:
+            state.replayCommands.add(ch)
     of SpriteClientInputMessage, SpriteClientReadyMessage,
         SpriteClientDebugSpriteMessage, SpriteClientSpritesOffMessage:
       discard
@@ -5763,7 +5551,15 @@ proc drainReplayViewerInput(
 
 proc newReplayViewerState*(): PlayerViewerState =
   ## Creates one replay viewer state with nothing selected.
-  PlayerViewerState(selectedPlayerIndex: -1)
+  PlayerViewerState(selectedPlayerIndex: -1, directorMode: true)
+
+proc setViewerSize*(state: PlayerViewerState, width, height: int) =
+  ## Receives the actual window size from the static/native renderer.
+  state.frameWidth = clamp(width, 240, 7680)
+  state.frameHeight = clamp(height, 240, 7680)
+
+proc setViewerBackground*(state: PlayerViewerState, forest: bool) =
+  state.forestBackdrop = forest
 
 proc handleReplayViewerPacket*(state: PlayerViewerState, data: string) =
   ## Applies one raw sprite-client packet from a local viewer: the
@@ -5796,6 +5592,69 @@ proc handleReplayViewerPacket*(state: PlayerViewerState, data: string) =
     state.pendingMapClickY = mapClick.y
   state.applyReplayViewerMessage(data)
 
+proc advanceReplayPresentation*(
+  sim: SimServer, replay: var ReplayPlayer, directorWatching = true
+) =
+  ## Shared server/static playback, camera, and dialogue pacing.
+  if replay.playing:
+    # Queue-mode bookkeeping: commit at births, release at
+    # deaths, rewind through same-tick birth groups, resume
+    # from the furthest tick shown.
+    sim.stepConversationQueue(replay)
+    # With a director watching, a conversation on screen slows
+    # 1X playback to show pacing: recorded lines land about five
+    # seconds apart. Other speeds respect the transport.
+    let showPacing = directorWatching and
+      (sim.directorFocusActive or sim.directorDinnerTtl > 0) and
+      replay.replaySpeedIndex() == DefaultSpeedIndex
+    var ticksThisFrame = 0
+    if showPacing:
+      inc sim.directorShowAccum
+      if sim.directorShowAccum >= DirectorShowFrames:
+        sim.directorShowAccum = 0
+        ticksThisFrame = 1
+    else:
+      sim.directorShowAccum = 0
+      ticksThisFrame = replay.replayTicksThisFrame()
+    # Between conversations the queue's playhead fast-forwards
+    # briskly to the next birth; committed playback never runs
+    # past its item's death tick. The clamps land the playhead
+    # exactly on each boundary.
+    if sim.convQueue.len > 0:
+      if not sim.convQueueCommitted and sim.directorDinnerTtl <= 0 and
+          replay.replaySpeedIndex() == DefaultSpeedIndex:
+        ticksThisFrame = QueueFastForwardTicks
+      if sim.convQueueCommitted:
+        ticksThisFrame = min(ticksThisFrame, max(0,
+          sim.convQueue[sim.convQueueIndex].deathTick - sim.tickCount))
+      elif sim.convQueueIndex < sim.convQueue.len:
+        ticksThisFrame = min(ticksThisFrame, max(0,
+          sim.convQueue[sim.convQueueIndex].birthTick - sim.tickCount))
+    # A camera glide is a held breath: at show speed the replay
+    # pauses until the shot settles, so cuts never swallow lines.
+    if directorWatching and sim.directorTweenLeft > 0 and
+        replay.replaySpeedIndex() == DefaultSpeedIndex:
+      ticksThisFrame = 0
+
+    for _ in 0 ..< ticksThisFrame:
+      if replay.playing:
+        replay.stepReplay(sim)
+    if replay.looping and not replay.playing and
+        replay.replayMaxTick() > 0:
+      sim.restartConversationQueue()
+      replay.seekReplay(sim, 0)
+      replay.playing = true
+  if replay.circlesTimeline.len > 0:
+    sim.conversationCircles =
+      replay.circlesTimeline.circlesAtTick(sim.tickCount)
+  else:
+    sim.inferConversationCircles()
+  sim.updateDirectorCamera()
+  if replay.playing or sim.chatFeedIndex < 0:
+    sim.advanceChatFeed()
+  else:
+    sim.chatFeedShownAt = epochTime()
+
 proc replayViewerFrame*(
   sim: SimServer,
   replay: var ReplayPlayer,
@@ -5815,22 +5674,9 @@ proc replayViewerFrame*(
       replay.applyReplaySeek(sim, seekTick)
     for command in commands:
       replay.applyReplayCommand(sim, command)
-    if replay.playing:
-      for _ in 0 ..< replay.replayTicksThisFrame():
-        if replay.playing:
-          replay.stepReplay(sim)
-      if replay.looping and not replay.playing and
-          replay.replayMaxTick() > 0:
-        replay.seekReplay(sim, 0)
-        replay.playing = true
-  if replay.circlesTimeline.len > 0:
-    # The replay recorded its circles; they beat any re-derivation.
-    sim.conversationCircles =
-      replay.circlesTimeline.circlesAtTick(sim.tickCount)
+    sim.advanceReplayPresentation(replay, state.directorMode)
   else:
-    sim.inferConversationCircles()
-  sim.advanceChatFeed()
-  sim.updateDirectorCamera()
+    sim.updateDirectorCamera()
   var nextState: PlayerViewerState
   result = sim.buildGlobalPacket(
     state,
@@ -6078,14 +5924,19 @@ when not defined(emscripten):
   // Report the window shape as a chat message ("aspect:WxH"), so the
   // server widens tall shots over the backdrop to this window instead
   // of a guessed 16:9. Same 0x81 text packet the player entry sends.
-  var told="";
+  var told="", toldSocket=null;
   function tell(){
-    var t="aspect:"+viewWidth()+"x"+viewHeight();
-    if(t===told||!socket||socket.readyState!==WebSocket.OPEN)return;
+    var t="aspect:"+document.documentElement.clientWidth+"x"+innerHeight;
+    if(!socket||socket.readyState!==WebSocket.OPEN)return;
+    if(t===told&&socket===toldSocket)return;
     var b=new Uint8Array(t.length+3);
     b[0]=0x81;writeU16(b,1,t.length);
     for(var i=0;i<t.length;i++)b[3+i]=t.charCodeAt(i);
-    sendPacket(b);told=t;
+    sendPacket(b);
+    var skin="background:"+(new URLSearchParams(location.search).get("background")||"brown");
+    var p=new Uint8Array(skin.length+3);p[0]=0x81;writeU16(p,1,skin.length);
+    for(var j=0;j<skin.length;j++)p[3+j]=skin.charCodeAt(j);
+    sendPacket(p);told=t;toldSocket=socket;
   }
   addEventListener("resize",function(){told="";tell();});
   setInterval(tell,1000);
@@ -6294,15 +6145,14 @@ when not defined(emscripten):
       if message.kind == BinaryMessage:
         {.gcsafe.}:
           withLock appState.lock:
-            if appState.replayServerMode:
-              if websocket in appState.replayViewers:
-                appState.replayViewers[websocket].applyReplayViewerMessage(
-                  message.data
-                )
-              elif websocket in appState.globalViewers:
-                appState.globalViewers[websocket].applyReplayViewerMessage(
-                  message.data
-                )
+            if websocket in appState.replayViewers:
+              appState.replayViewers[websocket].applyReplayViewerMessage(
+                message.data
+              )
+            elif websocket in appState.globalViewers:
+              appState.globalViewers[websocket].applyReplayViewerMessage(
+                message.data, appState.replayServerMode
+              )
       # Button masks and chat from /player sockets are ignored: souls play.
     of ErrorEvent:
       discard
@@ -6990,7 +6840,6 @@ when not defined(emscripten):
     )
     httpServer.waitUntilReady()
     lastTick = getMonoTime()
-    var directorShowAccum = 0
 
     while true:
       var
@@ -7069,67 +6918,12 @@ when not defined(emscripten):
           replay.applyReplaySeek(sim, seekTick)
         for command in commands:
           replay.applyReplayCommand(sim, command)
-        if replay.playing:
-          # Queue-mode bookkeeping: commit at births, release at
-          # deaths, rewind through same-tick birth groups, resume
-          # from the furthest tick shown.
-          sim.stepConversationQueue(replay)
-          # With a director watching, a conversation on screen slows
-          # 1X playback to show pacing: recorded lines land about five
-          # seconds apart. Other speeds respect the transport.
-          var directorWatching = false
-          for state in viewerStates:
-            if state.directorMode:
-              directorWatching = true
-              break
-          let showPacing = directorWatching and
-            (sim.directorFocusActive or sim.directorDinnerTtl > 0) and
-            replay.replaySpeedIndex() == DefaultSpeedIndex
-          var ticksThisFrame = 0
-          if showPacing:
-            inc directorShowAccum
-            if directorShowAccum >= DirectorShowFrames:
-              directorShowAccum = 0
-              ticksThisFrame = 1
-          else:
-            directorShowAccum = 0
-            ticksThisFrame = replay.replayTicksThisFrame()
-          # Between conversations the queue's playhead fast-forwards
-          # briskly to the next birth; committed playback never runs
-          # past its item's death tick. The clamps land the playhead
-          # exactly on each boundary.
-          if sim.convQueue.len > 0:
-            if not sim.convQueueCommitted and
-                replay.replaySpeedIndex() == DefaultSpeedIndex:
-              ticksThisFrame = QueueFastForwardTicks
-            if sim.convQueueCommitted:
-              ticksThisFrame = min(ticksThisFrame, max(0,
-                sim.convQueue[sim.convQueueIndex].deathTick - sim.tickCount))
-            elif sim.convQueueIndex < sim.convQueue.len:
-              ticksThisFrame = min(ticksThisFrame, max(0,
-                sim.convQueue[sim.convQueueIndex].birthTick - sim.tickCount))
-          # A camera glide is a held breath: at show speed the replay
-          # pauses until the shot settles, so cuts never swallow lines.
-          if directorWatching and sim.directorTweenLeft > 0 and
-              replay.replaySpeedIndex() == DefaultSpeedIndex:
-            ticksThisFrame = 0
-
-          for _ in 0 ..< ticksThisFrame:
-            if replay.playing:
-              replay.stepReplay(sim)
-          if replay.looping and not replay.playing and
-              replay.replayMaxTick() > 0:
-            sim.restartConversationQueue()
-            replay.seekReplay(sim, 0)
-            replay.playing = true
-      if replay.circlesTimeline.len > 0:
-        # The replay recorded its circles; they beat any re-derivation.
-        sim.conversationCircles =
-          replay.circlesTimeline.circlesAtTick(sim.tickCount)
-      else:
-        sim.inferConversationCircles()
-      sim.advanceChatFeed()
-      sim.updateDirectorCamera()
+      var directorWatching = false
+      for state in viewerStates:
+        if state.directorMode:
+          directorWatching = true
+          break
+      sim.advanceReplayPresentation(replay, directorWatching)
 
       for i in 0 ..< viewerSockets.len:
         var nextState: PlayerViewerState

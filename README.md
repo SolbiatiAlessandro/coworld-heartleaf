@@ -189,3 +189,11 @@ cd ../bitworld && nim r tools/quick_run.nim ../coworld-heartleaf \
 ## License
 
 MIT
+
+### Viewer stability review
+
+The director preserves the original village and uses brown framing by default.
+Use `?background=forest` to compare the optional forest surround (art review
+pending). Dialogue stays in the bottom parchment banner; replays retain their
+transport, while live spectators retain the historical live-only behavior.
+See [viewer changes, validation and review limits](docs/viewer-stability.md).
