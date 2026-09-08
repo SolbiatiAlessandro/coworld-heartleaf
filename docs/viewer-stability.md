@@ -5,17 +5,21 @@ resources, replay format, and game rules.
 
 - Light parchment (`#d5b072`) fills the surround. The map uses the existing
   pixel-art wooden and leafy border. A fixed frame masks overflow during zoom.
+- The full-village overview fits the available height. Conversation shots
+  fill the window with a wider camera crop, without stretching the map.
+  Crops stay inside the village art at map edges and in ultrawide windows.
 - The settled director shot shows the current speaker's card: one portrait,
   name, full recorded line, points, connection points, and relation to the listener.
-  It sits beside the map in landscape, below it in portrait, clear of the
-  leaderboard and transport. Wide shots and camera travel have no dialogue card.
+  The card overlays a clear edge of the full-screen scene and moves aside if
+  gnomes occupy that space. Wide shots and outdoor camera transitions have no card.
 - This restores the card contents from [director PR #35](https://github.com/Metta-AI/coworld-heartleaf/pull/35).
   The old two-portrait bottom banner is absent in director mode. Empty card
   frame, portrait, rule and letter sprites are reused; changing a line does not
   resend the whole card.
 - A host plus one guest qualifies for a room shot. Eligible rooms rotate, with
   their own camera coordinates and a transparent circular exterior.
-- The three emotion tiers use pixel faces anchored above names. Their placement
+- The three emotion tiers use 16×16 pixel faces, half the previous width and
+  height, anchored above names. Their placement
   clears nearby gnomes too. Whole pixel blocks dissolve during the fade:
   partial alpha in the pinned client's map layer could erase the map underneath.
 - Live viewers report their actual size, including after reconnect. Saved
@@ -72,16 +76,25 @@ review tool that mirrors the pinned client's layer composition. They use a
 controlled two-gnome scene. They are not browser screenshots. The Mac was locked
 during this refinement, so a fresh browser/GPU check remains pending.
 
-The reviewed frames cover wide view, outdoor zoom in progress and settled,
-portrait view, and circular rooms at zoom start, settled, and night. No black
+The reviewed frames cover wide view, full-screen outdoor zoom in progress and settled,
+map-edge card placement, portrait view, and circular rooms at zoom start,
+settled, and night. The complete circular room clears the transport. No black
 bars or opaque exterior room rectangle appeared in those renders. Intended
 night shading inside the room is preserved.
 
-![Zoomed director card and pixel emojis](viewer-stability/rendered-director-card.png)
+![Village overview fitted to available height](viewer-stability/rendered-wide.png)
+
+![Full-screen conversation and smaller pixel emojis](viewer-stability/rendered-director-card.png)
+
+![Card moves aside for a conversation at the village edge](viewer-stability/rendered-card-edge.png)
+
+![Circular room in landscape](viewer-stability/rendered-room-day.png)
 
 ![Circular room in portrait](viewer-stability/rendered-room-portrait.png)
 
 ![Circular room at night](viewer-stability/rendered-room-night.png)
+
+[Portrait conversation and closer emoji view](viewer-stability/rendered-director-portrait.png)
 
 ## Review limits
 

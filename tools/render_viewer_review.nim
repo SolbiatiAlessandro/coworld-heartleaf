@@ -140,6 +140,13 @@ capture("rendered-zoom-mid.png")
 for _ in 0..<60: sim.updateDirectorCamera()
 capture("rendered-director-card.png")
 capture("rendered-director-portrait.png",768,1024)
+sim.players[0].x=sim.mainMap.width-45
+sim.players[1].x=sim.mainMap.width-80
+sim.directorFocusX=sim.players[0].x+16
+sim.conversationAnchors[1].x=sim.directorFocusX
+sim.conversationCircles[0].x=sim.directorFocusX
+for _ in 0..<120: sim.updateDirectorCamera()
+capture("rendered-card-edge.png")
 for i, player in sim.players:
   player.mapIndex=1
   player.x=92+i*48
@@ -150,6 +157,7 @@ sim.updateDirectorCamera()
 sim.chatFeedIndex=0
 capture("rendered-room-zoom-start.png")
 for _ in 0..<120: sim.updateDirectorCamera()
+capture("rendered-room-day.png")
 capture("rendered-room-portrait.png",768,1024)
 sim.dayTick=sim.dayTicks-1
 capture("rendered-room-night.png")

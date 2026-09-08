@@ -2714,7 +2714,7 @@ proc heartEmoteSprite(sim: SimServer, tier, fade: int): RgbaSprite =
     for x in 0 ..< base.width:
       var color = base.rgbaSpriteAt(x, y)
       const order = [[0, 2], [3, 1]]
-      if order[(y div 2) mod 2][(x div 2) mod 2] >= visible:
+      if order[y mod 2][x mod 2] >= visible:
         color.a = 0
       sprite.putPixel(x, y, color)
   sim.heartEmoteFaded[key] = sprite
@@ -3681,14 +3681,47 @@ proc addDirectorWorldView(
   let
     tintIndex = sim.dayTintIndex()
     card = sim.activeDirectorCard()
-    cardHeight = if sim.directorFocusActive or sim.directorSceneMap != MainMapIndex:
+    conversation = sim.directorFocusActive or sim.directorSceneMap != MainMapIndex
+    cardHeight = if conversation:
       max(96, card.height) else: 0
     cropWidth = if forestBackdrop and not sim.directorFocusActive and
         sim.directorSceneMap == MainMapIndex:
       max(sim.directorCamW, sim.directorCamH * 1.5) else: sim.directorCamW
-    layout = frameLayout(sim.directorCamX - (cropWidth - sim.directorCamW) / 2,
+  var layout = frameLayout(sim.directorCamX - (cropWidth - sim.directorCamW) / 2,
       sim.directorCamY, cropWidth, sim.directorCamH, frameWidth, frameHeight,
-      sim.players.len > 0, replayControls, cardHeight)
+      sim.players.len > 0, replayControls, cardHeight, conversation,
+      (if sim.directorSceneMap == MainMapIndex: sim.mainMap.width else: 0),
+      (if sim.directorSceneMap == MainMapIndex: sim.mainMap.height else: 0))
+  if card.playerIndex >= 0:
+    # The card overlays the full-screen scene. Prefer the usual right
+    # position, then choose a clear edge when a gnome occupies it.
+    let scale = min(float(layout.canvasWidth) / float(layout.width),
+      float(layout.canvasHeight) / float(layout.height))
+    proc overlapScore(rect: ViewerRect): int =
+      for player in sim.players:
+        if player.mapIndex != sim.directorSceneMap: continue
+        let
+          x = int(float(player.x - layout.x - 4) * scale)
+          y = int(float(player.y - layout.y - 36) * scale)
+          w = int(ceil(float(GnomeSpriteSize + 8) * scale))
+          h = int(ceil(float(GnomeSpriteSize + 40) * scale))
+        result += max(0, min(rect.x + rect.width, x + w) - max(rect.x, x)) *
+          max(0, min(rect.y + rect.height, y + h) - max(rect.y, y))
+    var best = overlapScore(layout.card)
+    let
+      bottom = layout.canvasHeight - (if replayControls: 54 else: 14) - card.height
+      right = layout.canvasWidth - DirectorCardWidth - 14
+    for position in [(14, max(106, layout.card.y)), (right, bottom),
+        (14, bottom), (right, 18)]:
+      let candidate = ViewerRect(x: position[0], y: position[1],
+        width: DirectorCardWidth, height: card.height)
+      if candidate.y < 106 and candidate.x < 176: continue
+      if candidate.y < 0 or candidate.y + candidate.height > layout.canvasHeight: continue
+      let score = overlapScore(candidate)
+      if score < best:
+        layout.card = candidate
+        best = score
+  let
     cameraX = layout.x
     cameraY = layout.y
     mapIndex = sim.directorSceneMap

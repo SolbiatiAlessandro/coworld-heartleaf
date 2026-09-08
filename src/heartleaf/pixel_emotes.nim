@@ -1,6 +1,8 @@
 ## Small, hand-authored pixel faces using the game's parchment palette.
-## Each source pixel is a 2x2 block. No font emoji or interpolation.
+## One source pixel stays one world pixel. No font emoji or interpolation.
 import pixie, bitworld/sprites
+
+const PixelEmoteSize* = 16
 
 proc pixelEmote*(tier: int): RgbaSprite =
   const face = [
@@ -25,11 +27,9 @@ proc pixelEmote*(tier: int): RgbaSprite =
     outline = rgba(94, 58, 22, 255)
     fill = rgba(224, 175, 72, 255)
     light = rgba(248, 220, 136, 255)
-  result = newRgbaSprite(32, 32)
+  result = newRgbaSprite(PixelEmoteSize, PixelEmoteSize)
   proc dot(sprite: var RgbaSprite, x, y: int, color: ColorRGBA) =
-    for dy in 0 .. 1:
-      for dx in 0 .. 1:
-        sprite.putPixel(x * 2 + dx, y * 2 + dy, color)
+    sprite.putPixel(x, y, color)
   for y, row in face:
     for x, ch in row:
       case ch

@@ -18,11 +18,33 @@ for size in [(1280,720), (1024,768), (768,1024), (390,844)]:
   doAssert abs(float(layout.width) * scale - float(size[0])) < 2
   doAssert abs(float(layout.height) * scale - float(size[1])) < 2
   doAssert layout.y <= 0
-  let framed = frameLayout(100, 100, 250, 314, size[0], size[1], true, true, 128)
+  let framed = frameLayout(100, 100, 250, 314, size[0], size[1], true, true, 128,
+    conversation=true, worldWidth=748, worldHeight=941)
   doAssert framed.card.y >= 18
   doAssert framed.card.y + framed.card.height <= framed.canvasHeight - 42
-  doAssert framed.scene.x + framed.scene.width <= framed.card.x or
-    framed.scene.y + framed.scene.height <= framed.card.y
+  doAssert framed.scene.x == 0 and framed.scene.y == 0
+  doAssert framed.scene.width == framed.canvasWidth
+  doAssert framed.scene.height == framed.canvasHeight
+  doAssert layout.scene.height < layout.canvasHeight
+  let roomView = frameLayout(0,0,250,250,size[0],size[1],true,true,96,
+    conversation=true)
+  let roomScale = min(float(roomView.canvasWidth)/float(roomView.width),
+    float(roomView.canvasHeight)/float(roomView.height))
+  doAssert (250.0-float(roomView.y))*roomScale <= float(roomView.canvasHeight-42),
+    "the circular room must clear playback controls"
+
+# Full-screen crops stay within outdoor artwork even at map edges or
+# in an ultrawide window, rather than exposing a band of empty space.
+for size in [(1280,720), (2560,720), (390,844)]:
+  for focus in [(0.0,0.0), (623.0,784.0)]:
+    let view = frameLayout(focus[0],focus[1],250,314,size[0],size[1],true,true,96,
+      conversation=true, worldWidth=748, worldHeight=941)
+    let scale = min(float(view.canvasWidth)/float(view.width),
+      float(view.canvasHeight)/float(view.height))
+    doAssert float(view.x)+float(ViewerBorder)/scale >= -2
+    doAssert float(view.y)+float(ViewerBorder)/scale >= -2
+    doAssert float(view.x)+(float(view.canvasWidth)-float(ViewerBorder))/scale <= 750
+    doAssert float(view.y)+(float(view.canvasHeight)-float(ViewerBorder))/scale <= 943
 
 discard sim.addPlayer("host", 0)
 discard sim.addPlayer("guest", 1)
@@ -69,8 +91,9 @@ privateAccess(typeof(sim.chatFeed[0]))
 sim.advanceChatFeed(1)
 var next: PlayerViewerState
 let first = sim.buildGlobalPacket(state, next, replayControls=true)
-doAssert sim.viewerFrame.rgbaSpriteAt(0,0) == rgba(213,176,114,255)
-let frame = frameLayout(210,168,250,314,768,1024,true,true,96)
+doAssert sim.viewerBrown.rgbaSpriteAt(0,0) == rgba(213,176,114,255)
+let frame = frameLayout(210,168,250,314,768,1024,true,true,96,
+  conversation=true, worldWidth=sim.mainMap.width, worldHeight=sim.mainMap.height)
 doAssert sim.viewerFrame.rgbaSpriteAt(frame.scene.x + 20,frame.scene.y + 20).a == 0
 var labels = initTable[int,string]()
 for msg in parseSpritePacket(first):
@@ -124,15 +147,16 @@ var emotes = 0
 for tick in 0 ..< 72:
   sim.tickCount = tick
   let layout = frameLayout(sim.directorCamX, sim.directorCamY,
-    sim.directorCamW, sim.directorCamH, 768, 1024, true, true, 96)
+    sim.directorCamW, sim.directorCamH, 768, 1024, true, true, 96,
+    conversation=true, worldWidth=sim.mainMap.width, worldHeight=sim.mainMap.height)
   for msg in parseSpritePacket(sim.buildGlobalPacket(next2, next, replayControls=true)):
     if msg.kind == spkObject and msg.objectDef.id in 27_000 ..< 27_040:
       inc emotes
       let x = msg.objectDef.x + layout.x
       let y = msg.objectDef.y + layout.y
       for player in sim.players:
-        doAssert x + 32 <= player.x or x >= player.x + GnomeSpriteSize or
-          y + 32 <= player.y or y >= player.y + GnomeSpriteSize,
+        doAssert x + PixelEmoteSize <= player.x or x >= player.x + GnomeSpriteSize or
+          y + PixelEmoteSize <= player.y or y >= player.y + GnomeSpriteSize,
           "emoji must not overlap any gnome's body"
 doAssert emotes > 0
 doAssert sim.heartEmoteFaded.len >= 4
@@ -142,14 +166,32 @@ for sprite in sim.heartEmoteFaded.values:
 
 for tier in 0..2:
   let sprite = pixelEmote(tier)
-  doAssert sprite.width == 32 and sprite.height == 32
-  for y in countup(0,30,2):
-    for x in countup(0,30,2):
+  doAssert sprite.width == 16 and sprite.height == 16
+  doAssert sprite.width == GnomeSpriteSize div 2
+  for y in 0..<sprite.height:
+    for x in 0..<sprite.width:
       let color = sprite.rgbaSpriteAt(x,y)
       doAssert color.a in [0'u8,255'u8], "pixel icons have no smooth alpha edges"
-      doAssert color == sprite.rgbaSpriteAt(x+1,y)
-      doAssert color == sprite.rgbaSpriteAt(x,y+1)
-      doAssert color == sprite.rgbaSpriteAt(x+1,y+1)
+
+# A conversation at the right edge would sit underneath the default
+# right-hand card. The card must relocate to a clear side of the shot.
+sim.players[0].x=sim.mainMap.width-45
+sim.players[0].y=315
+sim.players[1].x=sim.mainMap.width-80
+sim.players[1].y=325
+sim.directorFocusX=sim.players[0].x+16
+sim.directorFocusY=340
+sim.directorCamX=float(sim.mainMap.width-250)
+sim.directorCamY=183
+var edgeState=newReplayViewerState()
+edgeState.setViewerSize(1280,720)
+var relocated=false
+for msg in parseSpritePacket(sim.buildGlobalPacket(edgeState,next,replayControls=true)):
+  if msg.kind==spkObject and msg.objectDef.id==28_000:
+    relocated=true
+    doAssert msg.objectDef.x < 176, "card must move away from the gnomes at the right edge"
+    doAssert msg.objectDef.y >= 106, "left card must clear the leaderboard"
+doAssert relocated
 echo "Viewer stability checks passed"
 
 # Concurrent conversations must finish, rewind, and resume without a stuck
