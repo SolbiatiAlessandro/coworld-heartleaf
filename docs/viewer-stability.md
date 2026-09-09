@@ -4,7 +4,7 @@ This change preserves the hand-drawn village, walk masks, house locations,
 resources, replay format, and game rules.
 
 - Light parchment (`#d5b072`) fills the surround. The map uses the existing
-  pixel-art wooden and leafy border. A fixed frame masks overflow during zoom.
+  pixel-art wooden and leafy border. The frame masks overflow and expands with the camera during zoom.
 - The full-village overview fills the window height with controls overlaid. Conversation shots
   fill the window with a wider camera crop, without stretching the map.
   Crops stay inside the village art at map edges and in ultrawide windows.
@@ -29,6 +29,67 @@ resources, replay format, and game rules.
   the earlier PRs.
 - Native and static replays share queue, camera and dialogue stepping at 24 Hz.
   The static build uses the director and unsigned 32-bit visual noise arithmetic.
+
+## Playback and portrait follow-up
+
+- Pause now freezes the camera, room rotation, speaker hops and dialogue read
+  time as well as the simulation. Resume advances the camera on its first frame.
+  A paused seek or next-conversation command refreshes its destination once.
+- The visible map frame and camera now share the two-second eased transition.
+  Entering a conversation no longer forces an immediate 1.67–2.29× zoom to fill
+  a wider rectangle. World-edge bounds include integer viewport rounding.
+- Transport targets grow from 12×7 to 14×20 logical pixels, including the gaps
+  between glyphs. Speed targets also grow; neither overlaps the scrubber.
+- Portraits use the original 54×54 pixel art instead of reducing it to 36×36:
+  50% larger in each dimension. Text reflows beside it; the score and connection
+  footer stays below both.
+
+At 1X the director still holds simulation ticks during its camera glide so it
+can show recorded dialogue after settling. Play resumes that glide immediately;
+other transport speeds retain their recorded tick pacing.
+
+## Reproduce the local test game
+
+The included [test replay](viewer-stability/local-viewer-scenario.replay) was
+recorded from a new nine-gnome simulation with seed 7301: three concurrent
+outdoor conversations, two host-plus-guest dinner rooms, and 4,500 ticks.
+Decisions and dialogue are authored for this test; this is not a model-generated
+playthrough. Gnomes use the ordinary navigation executor and doors. Every tick
+hash is recorded and checked. No archived inputs or edited game states are used.
+
+```sh
+nim r tools/record_viewer_scenario.nim out/viewer-scenario.replay
+out/heartleaf --port:8082 --load-replay:out/viewer-scenario.replay
+# Open http://localhost:8082/client/global
+```
+
+The generator also checks the full shared director playback: 18,161 frames,
+all three concurrent conversations, no stall, and matching hashes at completion.
+CI regenerates this scenario. Offline captures can be reproduced with:
+
+```sh
+nim r tools/render_replay_review.nim out/viewer-scenario.replay out/replay-review
+```
+
+Native WebSocket trials acknowledged 36/36 play/pause clicks after loading:
+9–71 ms in the overview and 7–49 ms in a conversation. These measure server
+response, not browser input-to-paint latency. Initial asset/control loading took
+about 1.8 seconds. The final native server streamed the whole recording to tick
+4,500 at 16X in 16.4 seconds, with no hash mismatch. Sixty paused presentation frames produced pixel-identical
+images. Native, unit, viewer, route, integration and static build checks pass.
+
+![Recorded village overview](viewer-stability/playback-overview.png)
+
+![Paused midway through the camera glide](viewer-stability/playback-paused.png)
+
+![Full-resolution portrait in the recorded conversation](viewer-stability/playback-portrait.png)
+
+![Recorded host-plus-guest dinner](viewer-stability/playback-dinner.png)
+
+![Recorded night room, with transparent exterior](viewer-stability/playback-night.png)
+
+[Animated offline zoom sequence](viewer-stability/zoom-playback.webp) ·
+[Portrait-window conversation](viewer-stability/playback-narrow.png)
 
 ## Two surrounds
 
@@ -71,10 +132,10 @@ and a synthetic conversation fixture reached tick 9120 with matching hashes.
 Before this visual refinement, the static fixture also completed in Chrome
 without captured browser errors. CI includes the native tests and static bundle.
 
-## Current visual evidence
+## Additional controlled visual evidence
 
-These are **offline renders of actual sprite-protocol packets**, using a small
-review tool that mirrors the pinned client's layer composition. They use a
+All images above and below are **offline renders of actual sprite-protocol packets**, using a small
+review tool that mirrors the pinned client's layer composition. The additional images below use a
 controlled two-gnome scene. They are not browser screenshots. The Mac was locked
 during this refinement, so a fresh browser/GPU check remains pending.
 

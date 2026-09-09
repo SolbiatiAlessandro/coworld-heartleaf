@@ -17,7 +17,8 @@ proc frameLayout*(
   hasPlayers, replayControls: bool,
   cardHeight = 0,
   conversation = false,
-  worldWidth = 0, worldHeight = 0
+  worldWidth = 0, worldHeight = 0,
+  focusBlend = 1.0, overviewAspect = 0.0
 ): ViewerLayout =
   ## The full village fits the entire window with UI overlaid. Conversation shots
   ## fill the window with a wider camera crop and overlay their card.
@@ -38,28 +39,53 @@ proc frameLayout*(
     bottom = if replayControls: 50 else: 8
   if conversation:
     result.scene = ViewerRect(width: cw, height: ch)
+    let blend = clamp(focusBlend, 0.0, 1.0)
+    if blend == 0 and worldWidth > 0:
+      return frameLayout(cropX,cropY,cropWidth,cropHeight,
+        frameWidth,frameHeight,hasPlayers,replayControls)
+    var boundsWidth = float(worldWidth)
+    if worldWidth > 0 and worldHeight > 0:
+      # Interpolate the visible frame as well as the camera crop. Switching
+      # directly to a full-window frame would force an instant zoom just
+      # to keep that wider rectangle inside the map.
+      let wideWidth = max(float(worldWidth), float(worldHeight) * overviewAspect)
+      let wideScale = min(float(cw - ViewerBorder * 2) / wideWidth,
+        float(ch - ViewerBorder * 2) / float(worldHeight))
+      let wideW = int(round(wideWidth * wideScale)) + ViewerBorder * 2
+      let wideH = int(round(float(worldHeight) * wideScale)) + ViewerBorder * 2
+      result.scene.width = int(round(float(wideW) + float(cw - wideW) * blend))
+      result.scene.height = int(round(float(wideH) + float(ch - wideH) * blend))
+      result.scene.x = (cw - result.scene.width) div 2
+      result.scene.y = (ch - result.scene.height) div 2
+      boundsWidth = wideWidth + (float(worldWidth) - wideWidth) * blend
     let
-      innerWidth = float(cw - ViewerBorder * 2)
+      innerWidth = float(result.scene.width - ViewerBorder * 2)
       # A room's circular exterior must remain wholly visible above
       # the transport even though its surrounding frame is full-screen.
       roomTransport = if worldHeight == 0 and replayControls: 50 else: 0
-      innerHeight = float(ch - ViewerBorder * 2 - roomTransport)
+      innerHeight = float(result.scene.height - ViewerBorder * 2 - roomTransport)
     var scale = min(innerWidth / max(1.0, cropWidth),
       innerHeight / max(1.0, cropHeight))
     # Near a village edge, pan within the actual art. Very wide
     # windows may need a tighter crop to avoid exposing empty space.
-    if worldWidth > 0: scale = max(scale, innerWidth / float(worldWidth))
+    if worldWidth > 0: scale = max(scale, innerWidth / boundsWidth)
     if worldHeight > 0: scale = max(scale, innerHeight / float(worldHeight))
     scale = max(scale, max(float(cw), float(ch)) / 8192.0)
+    # The protocol uses integer viewport sizes. Round inward and use the
+    # resulting scale for bounds, so an ultrawide viewport cannot expose
+    # artwork beyond the edge through accumulated rounding error.
+    result.width = max(1, int(floor(float(cw) / scale)))
+    result.height = max(1, int(floor(float(ch) / scale)))
+    scale = min(float(cw) / float(result.width), float(ch) / float(result.height))
     var
       left = cropX + cropWidth / 2 - innerWidth / scale / 2
       top = cropY + cropHeight / 2 - innerHeight / scale / 2
-    if worldWidth > 0: left = clamp(left, 0.0, max(0.0, float(worldWidth) - innerWidth / scale))
+    if worldWidth > 0:
+      let minX = (float(worldWidth) - boundsWidth) / 2
+      left = clamp(left, minX, minX + max(0.0, boundsWidth - innerWidth / scale))
     if worldHeight > 0: top = clamp(top, 0.0, max(0.0, float(worldHeight) - innerHeight / scale))
-    result.width = max(1, int(ceil(float(cw) / scale)))
-    result.height = max(1, int(ceil(float(ch) / scale)))
-    result.x = int(round(left - float(ViewerBorder) / scale))
-    result.y = int(round(top - float(ViewerBorder) / scale))
+    result.x = int(round(left - float(result.scene.x + ViewerBorder) / scale))
+    result.y = int(round(top - float(result.scene.y + ViewerBorder) / scale))
     if cardHeight > 0:
       result.card = ViewerRect(width: 158, height: cardHeight)
       if cw >= 480 and cw > ch:

@@ -41,6 +41,7 @@ jobs:
         run: |
           nim r tests/viewer_stability.nim
           nim r tests/routes.nim
+          nim r tools/record_viewer_scenario.nim out/viewer-scenario.replay
 
       - name: Integration tests
         run: HEARTLEAF_SERVER=out/heartleaf nim r tests/integration.nim

@@ -103,12 +103,10 @@ const
     ## in the same clear run between the transport buttons and speeds.
   TransportButtonsX = 10
   TransportRowY = 11
-  TransportButtonWidth = 12
   TransportButtonStride = 14
   TransportButtonCount = 6
   TransportRowHeight = 7
   TransportSpeedStride = 17
-  TransportSpeedWidth = 16
   TransportSpeedLabels = ["1/4", "1/2", "1X", "2X", "3X", "4X", "8X", "16X"]
   TransportSpeedCommands = ['q', 'h', '1', '2', '3', '4', '8', '6']
   SpeedRowX =
@@ -201,7 +199,7 @@ const
     ## Keep the parchment corners crisp when sizing UI panels.
   DirectorCardWidth = 158
   DirectorCardPad = 12
-  DirectorCardPortraitSize = 36
+  DirectorCardPortraitSize = 54
   DirectorFrameSpriteId = 9300
   DirectorCardFrameSpriteId = 9301
   DirectorCardFaceSpriteBase = 9150
@@ -519,6 +517,12 @@ type
     directorTweenFromW, directorTweenFromH: float
       ## The crop the current glide started from, eased toward the
       ## target over DirectorTweenFrames frames.
+    directorFrameBlend, directorTweenFromBlend: float
+      ## Overview-to-full-window framing follows the same camera glide.
+    replayPresentationDirty: bool
+      ## A paused seek redraws its destination once, without animating.
+    replayPresentationTime: float
+      ## Playback time for dialogue; pausing freezes its remaining read time.
     directorWideTicks: int
       ## Frames spent back on the wide shot with a conversation waiting.
     directorFocusTicks: int
@@ -548,7 +552,7 @@ type
     chatFeed: seq[ChatFeedItem]   ## viewer-only delay chat, never hashed
     chatFeedIndex: int
     chatFeedShownAt: float
-      ## epochTime when the current delay-chat line first appeared.
+      ## Live wall time, or replay presentation time, when the line appeared.
     convQueue*: seq[ConversationSpan]
       ## The replay's conversations in birth order, for the
       ## conversation-queue show. Viewer-only, never hashed; empty in
@@ -3284,6 +3288,7 @@ proc startDirectorTween(sim: SimServer) =
   sim.directorTweenFromY = sim.directorCamY
   sim.directorTweenFromW = sim.directorCamW
   sim.directorTweenFromH = sim.directorCamH
+  sim.directorTweenFromBlend = sim.directorFrameBlend
 
 proc releaseDirectorCommit(sim: SimServer) =
   ## Ends the camera's queue commitment: the shot glides back out to
@@ -3298,7 +3303,7 @@ proc releaseDirectorCommit(sim: SimServer) =
     sim.startDirectorTween()
     echo "Director commit out at tick ", sim.tickCount
 
-proc updateDirectorCamera*(sim: SimServer) =
+proc updateDirectorCamera*(sim: SimServer, snap = false) =
   ## Advances the director cut's camera one frame. The cut is fully
   ## automated: the wide shot of the village while nothing happens, a
   ## smooth zoom onto the sparkle ring while a conversation runs, back
@@ -3356,6 +3361,13 @@ proc updateDirectorCamera*(sim: SimServer) =
       sim.directorCamH = float(room.height) * 1.3
       sim.directorTweenLeft = 0
       sim.chatFeedIndex = -1
+    sim.directorFrameBlend = 1.0
+    if snap:
+      sim.directorCamX = 0
+      sim.directorCamY = 0
+      sim.directorCamW = float(room.width)
+      sim.directorCamH = float(room.height)
+      return
     sim.directorCamX *= 1.0 - DirectorTweenRate
     sim.directorCamY *= 1.0 - DirectorTweenRate
     sim.directorCamW += (float(room.width) - sim.directorCamW) * DirectorTweenRate
@@ -3370,6 +3382,7 @@ proc updateDirectorCamera*(sim: SimServer) =
     sim.directorCamH = mapH
     sim.directorFocusActive = false
     sim.directorTweenLeft = 0
+    sim.directorFrameBlend = 0.0
   # A queue commitment owns the camera: the shot belongs to one
   # conversation, addressed by its encounter id, from birth to death.
   # No dwell rotation and no tour - the DirectorFocusDwellFrames
@@ -3508,7 +3521,15 @@ proc updateDirectorCamera*(sim: SimServer) =
       targetH = targetW * mapH / mapW
     targetX = clamp(float(sim.directorFocusX) - targetW / 2, 0.0, mapW - targetW)
     targetY = clamp(float(sim.directorFocusY) - targetH / 2, 0.0, mapH - targetH)
-  if sim.directorTweenLeft > 0:
+  let targetBlend = if sim.directorFocusActive: 1.0 else: 0.0
+  if snap:
+    sim.directorCamX = targetX
+    sim.directorCamY = targetY
+    sim.directorCamW = targetW
+    sim.directorCamH = targetH
+    sim.directorFrameBlend = targetBlend
+    sim.directorTweenLeft = 0
+  elif sim.directorTweenLeft > 0:
     # A cut glides: the crop eases from where the glide started to the
     # target over a fixed run of frames, slow-fast-slow, and lands on
     # the target exactly when the countdown ends.
@@ -3517,6 +3538,8 @@ proc updateDirectorCamera*(sim: SimServer) =
       t = 1.0 -
         float(sim.directorTweenLeft) / float(DirectorTweenFrames)
       eased = t * t * (3.0 - 2.0 * t)
+    sim.directorFrameBlend = sim.directorTweenFromBlend +
+      (targetBlend - sim.directorTweenFromBlend) * eased
     sim.directorCamX =
       sim.directorTweenFromX + (targetX - sim.directorTweenFromX) * eased
     sim.directorCamY =
@@ -3526,6 +3549,7 @@ proc updateDirectorCamera*(sim: SimServer) =
     sim.directorCamH =
       sim.directorTweenFromH + (targetH - sim.directorTweenFromH) * eased
   else:
+    sim.directorFrameBlend = targetBlend
     # At rest the camera only follows the focused ring's small drift.
     sim.directorCamX += (targetX - sim.directorCamX) * DirectorTweenRate
     sim.directorCamY += (targetY - sim.directorCamY) * DirectorTweenRate
@@ -3681,17 +3705,21 @@ proc addDirectorWorldView(
   let
     tintIndex = sim.dayTintIndex()
     card = sim.activeDirectorCard()
-    conversation = sim.directorFocusActive or sim.directorSceneMap != MainMapIndex
+    conversation = sim.directorFocusActive or sim.directorFrameBlend > 0 or
+      sim.directorSceneMap != MainMapIndex
     cardHeight = if conversation:
       max(96, card.height) else: 0
-    cropWidth = if forestBackdrop and not sim.directorFocusActive and
-        sim.directorSceneMap == MainMapIndex:
-      max(sim.directorCamW, sim.directorCamH * 1.5) else: sim.directorCamW
+    cropWidth = if forestBackdrop and sim.directorSceneMap == MainMapIndex:
+      sim.directorCamW + max(0.0, sim.directorCamH * 1.5 - sim.directorCamW) *
+        (1.0 - sim.directorFrameBlend)
+      else: sim.directorCamW
   var layout = frameLayout(sim.directorCamX - (cropWidth - sim.directorCamW) / 2,
       sim.directorCamY, cropWidth, sim.directorCamH, frameWidth, frameHeight,
       sim.players.len > 0, replayControls, cardHeight, conversation,
       (if sim.directorSceneMap == MainMapIndex: sim.mainMap.width else: 0),
-      (if sim.directorSceneMap == MainMapIndex: sim.mainMap.height else: 0))
+      (if sim.directorSceneMap == MainMapIndex: sim.mainMap.height else: 0),
+      focusBlend = sim.directorFrameBlend,
+      overviewAspect = (if forestBackdrop: 1.5 else: 0.0))
   if card.playerIndex >= 0:
     # The card overlays the full-screen scene. Prefer the usual right
     # position, then choose a clear edge when a gnome occupies it.
@@ -3795,15 +3823,15 @@ proc replayCommandAt(layer, x, y: int): char =
   ## transport buttons and speed labels share one row on the center bar.
   if layer != ReplayCenterBottomLayerId:
     return '\0'
-  let localY = y - ChatBannerAreaHeight - TransportRowY
-  if localY < 0 or localY >= TransportRowHeight:
+  # The visible glyph is small pixel art; its target fills the button's
+  # lane, including the inter-button gap, and stops before the scrubber.
+  let localY = y - ChatBannerAreaHeight
+  if localY < 4 or localY >= ReplayScrubberY - 2:
     return '\0'
   let buttonX = x - TransportButtonsX
   if buttonX >= 0 and
       buttonX < TransportButtonCount * TransportButtonStride:
     let index = buttonX div TransportButtonStride
-    if buttonX - index * TransportButtonStride >= TransportButtonWidth:
-      return '\0'
     case index
     of 0: return '<'
     of 1: return 'N'  # prev conversation
@@ -3815,8 +3843,6 @@ proc replayCommandAt(layer, x, y: int): char =
   if speedX >= 0 and
       speedX < TransportSpeedCommands.len * TransportSpeedStride:
     let index = speedX div TransportSpeedStride
-    if speedX - index * TransportSpeedStride >= TransportSpeedWidth:
-      return '\0'
     return TransportSpeedCommands[index]
   '\0'
 
@@ -5412,7 +5438,8 @@ proc seekReplay*(replay: var ReplayPlayer, sim: SimServer, tick: int) =
   sim.trails.setLen(0)
   sim.chatFeed.setLen(0)
   sim.chatFeedIndex = -1
-  sim.chatFeedShownAt = 0.0
+  sim.chatFeedShownAt = sim.replayPresentationTime
+  sim.replayPresentationDirty = true
   sim.conversationCircles.setLen(0)
   sim.conversationAnchors.clear()
   # Bound stepping by the last recorded tick, not by the hash cursor:
@@ -5449,6 +5476,7 @@ proc commitConversation(
   ## ran past it in a same-tick birth group); a scrub that lands
   ## mid-span commits in place instead and plays from there.
   let item = sim.convQueue[index]
+  sim.replayPresentationDirty = true
   sim.convQueueIndex = index
   sim.convQueueLast = index
   sim.convQueueCommitted = true
@@ -5480,7 +5508,7 @@ proc alignConversationQueue(
       # Only lines spoken from here on air: the keyframe replay behind
       # a seek refills the feed with lines from before the target.
       sim.chatFeedIndex = sim.chatFeed.len
-      sim.chatFeedShownAt = epochTime()
+      sim.chatFeedShownAt = sim.replayPresentationTime
       return
   var next = sim.convQueue.len
   for i, span in sim.convQueue:
@@ -5824,8 +5852,13 @@ proc handleReplayViewerPacket*(state: PlayerViewerState, data: string) =
 proc advanceReplayPresentation*(
   sim: SimServer, replay: var ReplayPlayer, directorWatching = true
 ) =
-  ## Shared server/static playback, camera, and dialogue pacing.
+  ## Shared server/static playback, camera, and dialogue pacing. A pause
+  ## freezes the whole presentation, not only the simulation tick.
+  let pausedRefresh = not replay.playing
+  if pausedRefresh and not sim.replayPresentationDirty and sim.directorCamW > 0:
+    return
   if replay.playing:
+    sim.replayPresentationTime += 1.0 / float(ReplayFps)
     # Queue-mode bookkeeping: commit at births, release at
     # deaths, rewind through same-tick birth groups, resume
     # from the furthest tick shown.
@@ -5878,11 +5911,9 @@ proc advanceReplayPresentation*(
       replay.circlesTimeline.circlesAtTick(sim.tickCount)
   else:
     sim.inferConversationCircles()
-  sim.updateDirectorCamera()
-  if replay.playing or sim.chatFeedIndex < 0:
-    sim.advanceChatFeed()
-  else:
-    sim.chatFeedShownAt = epochTime()
+  sim.updateDirectorCamera(snap = pausedRefresh)
+  sim.advanceChatFeed(sim.replayPresentationTime)
+  sim.replayPresentationDirty = false
 
 proc replayViewerFrame*(
   sim: SimServer,
