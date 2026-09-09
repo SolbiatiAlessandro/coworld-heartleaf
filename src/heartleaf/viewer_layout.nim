@@ -3,7 +3,7 @@ import std/math
 
 const
   ViewerBorder* = 10
-  ViewerCardWidth* = 236
+  ViewerCardWidth* = 208
   ViewerRailWidth* = 150
 
 type
@@ -24,7 +24,7 @@ proc frameLayout*(
   worldWidth = 0, worldHeight = 0,
   focusBlend = 1.0, overviewAspect = 0.0, sidebars = false
 ): ViewerLayout =
-  ## The village fits the stage between optional sidebars. Conversation shots
+  ## The village fits the stage beside the optional leaderboard. Conversation shots
   ## fill that stage with a wider crop and overlay their current-speaker card.
   let
     fw = float(if frameWidth > 0: frameWidth else: 1280)
@@ -43,7 +43,7 @@ proc frameLayout*(
     ch = result.canvasHeight
     bottom = if replayControls: 50 else: 8
     rail = if sidebars and cw >= 600 and cw > ch: ViewerRailWidth else: 0
-    sw = cw - rail * 2
+    sw = cw - rail
   result.railWidth = rail
   result.stage = ViewerRect(x: rail, width: sw, height: ch)
   if conversation:

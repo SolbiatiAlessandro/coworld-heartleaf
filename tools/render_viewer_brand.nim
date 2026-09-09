@@ -24,8 +24,7 @@ proc capture(name:string,width=1280,height=720,openLeaderboard=false) =
     replayPlaying=replay.playing,replayTick=sim.tickCount,
     replayMaxTick=replay.replayMaxTick(),replaySpeedIndex=replay.speedIndex),
     width,height,output/name)
-replay.applyReplaySeek(sim,800)
-replay.applyReplayConversation(sim,-1)
+replay.applyReplaySeek(sim,799)
 sim.advanceReplayPresentation(replay)
 capture("01-overview.png")
 capture("02-laptop.png",1440,900)

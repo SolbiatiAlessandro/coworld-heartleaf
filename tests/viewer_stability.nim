@@ -132,7 +132,7 @@ for msg in parseSpritePacket(second):
     doAssert not msg.sprite.label.startsWith("viewer parchment frame")
   elif msg.kind == spkObject:
     let label = labels.getOrDefault(msg.objectDef.spriteId)
-    if label.startsWith("banner glyph"): inc glyphs
+    if label.startsWith("viewer glyph"): inc glyphs
     doAssert msg.objectDef.id != 25_000, "director never shows the old bottom dialogue banner"
     if label.startsWith("director empty card"):
       inc backgrounds
@@ -140,7 +140,7 @@ for msg in parseSpritePacket(second):
     if label.startsWith("director portrait"): inc portraits
     if msg.objectDef.id >= 48_000 and msg.objectDef.id < 49_000:
       let id = msg.objectDef.spriteId
-      cardText.add(char(if id >= 9500: id - 9500 else: id - 8720 + 32))
+      cardText.add(char(if id >= 15000: (id - 15000) mod 128 else: id - 8720 + 32))
 doAssert glyphs > 20 and backgrounds == 1 and portraits == 1
 doAssert "Points: 27" in cardText and "Connections: 9" in cardText
 doAssert "A different sentence" in cardText

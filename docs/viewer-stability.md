@@ -3,9 +3,10 @@
 This change preserves the hand-drawn village, walk masks, house locations,
 resources, replay format, and game rules.
 
-- Light parchment (`#d5b072`) fills the surround. The map uses the existing
+- The supplied pixel-brick tile fills the surround. Circular room interiors retain
+  light parchment (`#d5b072`). The map uses the existing
   pixel-art wooden and leafy border. The frame masks overflow and expands with the camera during zoom.
-- The full-village overview fills the window height, between the two side panels. Conversation shots
+- The full-village overview fills the window height, beside the left leaderboard. Conversation shots
   fill that central stage with a wider camera crop, without stretching the map.
   Crops stay inside the village art at map edges and in ultrawide windows.
   In narrow portrait windows, the overview fits the width to keep the whole
@@ -45,61 +46,71 @@ in the checked desktop, laptop, narrow portrait and 1280×600 layouts.
 Regenerate these protocol renders with:
 `nim r tools/render_viewer_brand.nim out/title-review`.
 
-![Leafy Heartleaf leaderboard title](viewer-stability/title-01-overview.png)
+![Leafy Heartleaf leaderboard title](viewer-stability/simple-01-overview.png)
 
-[Conversation view](viewer-stability/title-04-conversation.png) ·
-[Laptop](viewer-stability/title-02-laptop.png) ·
-[Narrow panel](viewer-stability/title-03-narrow.png) ·
-[Short window](viewer-stability/title-05-short-window.png)
+[Conversation view](viewer-stability/simple-04-conversation.png) ·
+[Laptop](viewer-stability/simple-02-laptop.png) ·
+[Narrow panel](viewer-stability/simple-03-narrow.png) ·
+[Short window](viewer-stability/simple-05-short-window.png)
 
-## Conversation navigation and readability
+## Current layout, text and controls
 
-- The leaderboard sits to the left of the map, sorted by points. Recorded
-  conversations sit to the right. Both panels use the existing parchment,
-  wooden and leafy pixel artwork. The map keeps its full available height.
-- Each conversation card shows its recorded game time (24-hour clock), all
-  participant portraits, the number of spoken turns, and Play. Selecting one
-  seeks to its start and commits the camera to that encounter, including when
-  other conversations started at the same tick. Longer lists have page arrows.
-  Narrow windows expose each panel through a compact toggle.
-- Dialogue and speaker text use integer 2× Tiny5 glyphs; the 54×54 portrait and
-  score/connection footer remain. Glyphs, portraits and empty panel frames are
-  cached separately; stationary frames send no new sprite textures.
-- The pixel X in the card's upper-right corner returns to the village overview.
-  Overview stays selected during playback and scrubbing until a conversation
-  is explicitly selected. Closing retains play/pause state and also works
-  during dinner. Overview mode uses ordinary replay pacing.
-- Playback buttons get a local, stepped press/pop effect on pointer-down,
-  without a network round trip. Reduced-motion users get a brief highlight.
-  This acknowledges the click; the authoritative play/pause icon still follows
-  replay state. Both native HTML and WASM include the same feedback script.
-- The transport and new panels share an integer UI scale, so laptop windows
-  do not enlarge the transport across the sidebars.
+The viewer has a left Heartleaf leaderboard and the game beside it. The right
+conversation list, card X and browser press/pop animation were removed after
+review. The ordinary transport remains. Narrow windows can toggle the leaderboard.
 
-Checks: `nim r tests/viewer_navigation.nim` exercises real sprite-client input
-through the shared replay entrypoint: concurrent selection, X while paused,
-continued overview playback, scrubbing, dinner exit, pagination and narrow
-panel toggles. `node tests/viewer_feedback.cjs` checks transport hit geometry
-and synchronous animation dispatch. These do not measure browser input-to-paint
-latency; direct browser verification remains unavailable while the Mac is locked.
+Tiny5's source character grid is 6 pixels high. Dialogue, scores and relation
+text now use 7 logical pixels; gnome names use 8, rather than the previous 12.
+Glyphs use nearest-pixel sampling and width-aware wrapping. At the common 2×
+window scale, these grids occupy 14 and 16 display pixels. The native 54×54
+portrait, individual glyph cache and shared frame sprites remain.
 
-With these panels enabled, the native WebSocket replay acknowledged 12/12
-play/pause trials in 24–52 ms after loading and reached tick 4,500 at 16X in
-16.3 seconds. These are server-response measurements, not browser paint timing.
+`data/viewer-bricks.png` is the tile supplied by Alessandro on September 9.
+It is reused unchanged, sampled at half size and tiled behind the framed game
+and parchment leaderboard. The title still uses the existing Heartleaf logo.
 
-The following are current replay-derived protocol renders:
+### Button diagnosis and repairs
 
-![Full-height overview with both side panels](viewer-stability/navigation-overview.png)
+- The old state stored one pending click. Two next-conversation clicks before
+  a frame advanced only once. Input now preserves every click and its order.
+- Seeks and commands previously drained into separate lists, which could
+  reorder play/seek combinations. One input queue preserves arrival order.
+- The director slowed only 1× playback. In a settled conversation, 100 frames
+  advanced 20 ticks at 1×, 50 at ½×, and 25 at ¼×. All speeds now multiply the
+  same director pace: the corresponding results are 20, 10, and 5 ticks.
+- Previous selected the same committed conversation repeatedly. It now selects
+  the preceding conversation. Play at the recording end restarts playback.
+- Camera cuts hold the first conversation tick at every speed, including the
+  first frame of a cut. Pause still freezes the whole presentation.
 
-![Selecting the second simultaneous conversation](viewer-stability/navigation-conversation.png)
+The speed buttons `1/4` and `1/2` mean quarter and half speed, not 1.4× or 1.2×.
+The director still uses slower conversation pacing and faster travel between
+conversations. The selected speed multiplies those respective base rates.
 
-![Village overview after closing the conversation](viewer-stability/navigation-closed.png)
+`tests/viewer_controls.nim` sends actual sprite-client packets through the shared
+native/static entrypoint. It checks rapid next clicks, previous, double toggles,
+play/seek ordering, all eight speeds, 64 pause/speed combinations, end/restart,
+cut boundaries and a complete 4,500-tick replay with matching hashes.
+The full local unit, viewer, route and integration suites pass, as do native
+and pinned WASM builds. A real native WebSocket run acknowledged all 12
+play/pause trials in 21–53 ms (median 30 ms), and reached tick 4,500 in 65.6
+seconds at 16×. These measure server response, not browser display latency.
 
-![Laptop layout with matching transport scale](viewer-stability/navigation-laptop.png)
+Current images below are offline renders of actual replay packets, not browser
+screenshots. Browser input-to-paint timing remains unverified while the Mac is locked.
 
-![Dinner room and larger dialogue](viewer-stability/navigation-dinner.png)
+![Village and left Heartleaf leaderboard](viewer-stability/simple-02-laptop.png)
 
-## Playback and portrait follow-up
+![Smaller dialogue with larger names](viewer-stability/simple-04-conversation.png)
+
+![Half-speed playback after a button sequence](viewer-stability/controls-04-half-speed.png)
+
+![Dinner room during the complete replay](viewer-stability/controls-07-dinner.png)
+
+[Short window](viewer-stability/simple-05-short-window.png) ·
+[Narrow leaderboard](viewer-stability/simple-03-narrow.png)
+
+## Playback and portrait repairs
 
 - Pause now freezes the camera, room rotation, speaker hops and dialogue read
   time as well as the simulation. Resume advances the camera on its first frame.
@@ -113,9 +124,8 @@ The following are current replay-derived protocol renders:
   50% larger in each dimension. Text reflows beside it; the score and connection
   footer stays below both.
 
-At 1X the director still holds simulation ticks during its camera glide so it
-can show recorded dialogue after settling. Play resumes that glide immediately;
-other transport speeds retain their recorded tick pacing.
+At every speed the director holds simulation ticks during a camera glide so
+recorded dialogue begins after settling. Play resumes that glide immediately.
 
 ## Reproduce the local test game
 
@@ -168,7 +178,7 @@ Open `/client/global` for parchment, or append `?background=forest` for the fore
 comparison. Static URLs accept the same parameter alongside `replay`.
 
 The optional forest has no extra houses and uses the map's day/night tint.
-Its generated joins still need art review. Parchment is the proposed default.
+Its generated joins still need art review. The brick surround is the current default.
 
 `data/forest.png` and `data/forest-frame.png` were generated on September 8 using
 OpenAI ImageGen with the existing `data/backdrop.png` and `docs/heartleafMap.png`
@@ -184,6 +194,8 @@ Native Nim 2.2.10; static Nim 2.2.4 and Emscripten 4.0.15.
 nim c src/heartleaf.nim
 nim r tests/tests.nim
 nim r tests/viewer_stability.nim
+nim r tests/viewer_navigation.nim
+nim r tests/viewer_controls.nim
 nim r tests/routes.nim
 HEARTLEAF_SERVER=out/heartleaf nim r tests/integration.nim
 nim c -d:emscripten wasm/replay_viewer.nim
@@ -203,7 +215,7 @@ and a synthetic conversation fixture reached tick 9120 with matching hashes.
 Before this visual refinement, the static fixture also completed in Chrome
 without captured browser errors. CI includes the native tests and static bundle.
 
-## Additional controlled visual evidence
+## Earlier controlled visual evidence (before the current layout)
 
 All images above and below are **offline renders of actual sprite-protocol packets**, using a small
 review tool that mirrors the pinned client's layer composition. The additional images below use a
@@ -236,5 +248,4 @@ night shading inside the room is preserved.
 
 Andre's original freeze recording is unavailable; completing other fixtures
 does not diagnose or close that failure. Forest joins require art review.
-Fresh browser/GPU validation and hosted testing remain pending. No merge or
-deployment has been performed.
+Fresh browser/GPU validation and hosted testing remain pending. No PR merge or production game deployment has been performed.
