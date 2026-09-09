@@ -7,18 +7,24 @@ resources, replay format, and game rules.
   light parchment (`#d5b072`). The map uses the existing
   pixel-art wooden and leafy border. The frame masks overflow and expands with the camera during zoom.
 - The full-village overview fills the window height, beside the left leaderboard. Conversation shots
-  fill that central stage with a wider camera crop, without stretching the map.
+  hide the leaderboard and fill the entire window, without stretching the map.
   Crops stay inside the village art at map edges and in ultrawide windows.
   In narrow portrait windows, the overview fits the width to keep the whole
   village visible. Playback controls never reduce its size.
-- The settled director shot shows the current speaker's card: one portrait,
-  name, full recorded line, points, connection points, and relation to the listener.
-  The card overlays a clear edge of the full-screen scene and moves aside if
-  gnomes occupy that space. Wide shots and outdoor camera transitions have no card.
-- This restores the card contents from [director PR #35](https://github.com/Metta-AI/coworld-heartleaf/pull/35).
-  The old two-portrait bottom banner is absent in director mode. Empty card
-  frame, portrait, rule and letter sprites are reused; changing a line does not
-  resend the whole card.
+- The settled director shot shows one compact card per gnome who has spoken.
+  Their latest aired line updates that card; queued future lines remain hidden.
+  A large portrait rises above the left edge, dialogue sits beside it and flows
+  below for longer lines, and a light wooden bottom strip contains only the
+  name and relationship. Points stay in the leaderboard; connections are absent.
+- Cards use clear edges of the full-screen world and keep the central conversation
+  visible where space permits. They never overlap each other or the transport.
+  Small or crowded windows show the most recent speakers that fit. Six cards fit
+  the checked 1280×720 group scene. Overview and outdoor glides have no cards.
+- This restores separate gnome cards from [director PR #35](https://github.com/Metta-AI/coworld-heartleaf/pull/35),
+  using the user's revised parchment/portrait/bottom-strip arrangement. Only lines
+  aired in the current shot persist, and switching conversations clears them.
+  The old two-portrait banner is absent. Frames, portraits, identity strips and
+  letter sprites are cached separately; changing a line does not resend a full card.
 - A host plus one guest qualifies for a room shot. Eligible rooms rotate, with
   their own camera coordinates and a transparent circular exterior.
 - The three emotion tiers use 16×16 pixel faces, half the previous width and
@@ -59,11 +65,15 @@ The viewer has a left Heartleaf leaderboard and the game beside it. The right
 conversation list, card X and browser press/pop animation were removed after
 review. The ordinary transport remains. Narrow windows can toggle the leaderboard.
 
-Tiny5's source character grid is 6 pixels high. Dialogue, scores and relation
-text now use 7 logical pixels; gnome names use 8, rather than the previous 12.
-Glyphs use nearest-pixel sampling and width-aware wrapping. At the common 2×
-window scale, these grids occupy 14 and 16 display pixels. The native 54×54
-portrait, individual glyph cache and shared frame sprites remain.
+Dialogue, gnome names, scores and relation text use the original Tiny5 glyphs
+and spacing directly. No glyph is enlarged or resampled. Card letters use darker
+ink, retaining the original pixel shapes. The existing portrait art is displayed
+at 81×81 in compact 188-pixel-wide cards, protruding above the frame. The earlier
+7/8-pixel and doubled text experiments were withdrawn after review.
+
+The play/pause artwork and normal toggle match `origin/master`. There is no
+additional click animation. The input-order and playback-rate fixes below
+repair the existing controls without redesigning them.
 
 `data/viewer-bricks.png` is the tile supplied by Alessandro on September 9.
 It is reused unchanged, sampled at half size and tiled behind the framed game
@@ -93,7 +103,7 @@ play/seek ordering, all eight speeds, 64 pause/speed combinations, end/restart,
 cut boundaries and a complete 4,500-tick replay with matching hashes.
 The full local unit, viewer, route and integration suites pass, as do native
 and pinned WASM builds. A real native WebSocket run acknowledged all 12
-play/pause trials in 21–53 ms (median 30 ms), and reached tick 4,500 in 65.6
+play/pause trials in 24–51 ms (median 29 ms), and reached tick 4,500 in 65.5
 seconds at 16×. These measure server response, not browser display latency.
 
 Current images below are offline renders of actual replay packets, not browser
@@ -101,7 +111,13 @@ screenshots. Browser input-to-paint timing remains unverified while the Mac is l
 
 ![Village and left Heartleaf leaderboard](viewer-stability/simple-02-laptop.png)
 
-![Smaller dialogue with larger names](viewer-stability/simple-04-conversation.png)
+![Original font in a full-screen conversation](viewer-stability/simple-04-conversation.png)
+
+The following two controlled scenes exercise multiple speakers with the same renderer:
+
+![Two compact gnome cards](viewer-stability/compact-two-cards.png)
+
+![Six speakers with separate cards](viewer-stability/compact-six-cards.png)
 
 ![Half-speed playback after a button sequence](viewer-stability/controls-04-half-speed.png)
 
@@ -120,9 +136,11 @@ screenshots. Browser input-to-paint timing remains unverified while the Mac is l
   a wider rectangle. World-edge bounds include integer viewport rounding.
 - Transport targets grow from 12×7 to 14×20 logical pixels, including the gaps
   between glyphs. Speed targets also grow; neither overlaps the scrubber.
-- Portraits use the original 54×54 pixel art instead of reducing it to 36×36:
-  50% larger in each dimension. Text reflows beside it; the score and connection
-  footer stays below both.
+- Compact per-gnome cards use the original lettering, an enlarged protruding
+  portrait and a light wooden name/relationship strip across the bottom edge.
+  A gnome's later turn replaces their previous line, preserving the other speakers.
+  There are no points or connections in the cards. Nine-seat coverage checks that
+  every gnome's object IDs remain inside the protocol's 16-bit range.
 
 At every speed the director holds simulation ticks during a camera glide so
 recorded dialogue begins after settling. Play resumes that glide immediately.
@@ -142,7 +160,7 @@ out/heartleaf --port:8082 --load-replay:out/viewer-scenario.replay
 # Open http://localhost:8082/client/global
 ```
 
-The generator also checks the full shared director playback: 18,161 frames,
+The generator also checks the full shared director playback: 18,172 frames,
 all three concurrent conversations, no stall, and matching hashes at completion.
 CI regenerates this scenario. Offline captures can be reproduced with:
 
@@ -174,7 +192,7 @@ Earlier stability iteration (before the side panels):
 
 ## Two surrounds
 
-Open `/client/global` for parchment, or append `?background=forest` for the forest
+Open `/client/global` for bricks, or append `?background=forest` for the forest
 comparison. Static URLs accept the same parameter alongside `replay`.
 
 The optional forest has no extra houses and uses the map's day/night tint.
@@ -203,8 +221,9 @@ nim r tools/render_viewer_review.nim out/viewer-review
 ```
 
 Regressions cover party eligibility, room transparency through night tints,
-unchanged gameplay hashes, portrait/landscape layout, one portrait with score
-and connections, card-component reuse across changed text, absence of the old
+unchanged gameplay hashes, portrait/landscape layout, per-gnome latest-line
+retention, no future lines, conversation isolation, nine-seat ID safety,
+name/relationship bottom strips, component reuse across changed text, absence of the old
 banner, no card in wide shots or camera travel, every emoji animation phase
 clearing both gnome bodies, opaque/dissolved icon pixels, and conversation
 playback with pause/seek.

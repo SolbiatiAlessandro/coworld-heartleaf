@@ -59,23 +59,47 @@ sim.directorTweenFromH=sim.directorCamH
 for _ in 0..<24: sim.updateDirectorCamera()
 capture("rendered-zoom-mid.png")
 for _ in 0..<60: sim.updateDirectorCamera()
+sim.advanceChatFeed(1)
 capture("rendered-director-card.png")
 capture("rendered-director-portrait.png",768,1024)
+capture("rendered-director-narrow.png",320,700)
+capture("rendered-director-short.png",1280,600)
+sim.queueDelayChat(sim.players[1].playerName, "I will bring grapes. Let us share supper at your house.")
+sim.chatFeed[1].hearers = @[typeof(sim.chatFeed[0].hearers[0])(
+  name: sim.players[0].playerName, gnomeIndex: sim.players[0].gnomeIndex)]
+sim.advanceChatFeedNow(10)
+capture("rendered-two-cards.png")
+capture("rendered-two-cards-narrow.png",320,700)
+for i in 2..5:
+  discard sim.addPlayer("guest " & $i,i)
+  sim.players[i].mapIndex=0
+  sim.players[i].x=425+(i mod 2)*12
+  sim.players[i].y=300+(i div 2)*12
+  sim.queueDelayChat(sim.players[i].playerName, "I have carrots ready. Shall we bring some for supper?")
+  sim.chatFeed[i].hearers = sim.chatFeed[1].hearers
+  sim.advanceChatFeedNow(float(i*10))
+capture("rendered-six-cards.png")
+# Restore the two-gnome scene for map-edge and room comparisons.
+sim.players.setLen(2)
+sim.chatFeed.setLen(2)
+sim.chatFeedIndex=1
+
 sim.players[0].x=sim.mainMap.width-45
 sim.players[1].x=sim.mainMap.width-80
 sim.directorFocusX=sim.players[0].x+16
 sim.conversationAnchors[1].x=sim.directorFocusX
 sim.conversationCircles[0].x=sim.directorFocusX
 for _ in 0..<120: sim.updateDirectorCamera()
+sim.advanceChatFeed(20)
 capture("rendered-card-edge.png")
 for i, player in sim.players:
   player.mapIndex=1
   player.x=92+i*48
   player.y=90
-sim.chatFeed[0].mapIndex=1
+for item in sim.chatFeed.mitems: item.mapIndex=1
 sim.directorCommitEncounter=0
 sim.updateDirectorCamera()
-sim.chatFeedIndex=0
+sim.advanceChatFeed(70)
 capture("rendered-room-zoom-start.png")
 for _ in 0..<120: sim.updateDirectorCamera()
 capture("rendered-room-day.png")

@@ -15,16 +15,16 @@ sim.buildConversationQueue(replay.replayMaxTick())
 replay.looping = false
 var state = newReplayViewerState()
 state.setViewerSize(1280,720)
-replay.applyReplaySeek(sim,850)
+replay.applyReplaySeek(sim,799)
 let initialHash = sim.gameHash()
 let first = sim.replayViewerFrame(replay,state,true)
 var glyphHeights: seq[int]
 for msg in parseSpritePacket(first):
-  if msg.kind == spkSprite and msg.sprite.id >= 15000 and msg.sprite.id < 17000:
+  if msg.kind == spkSprite and msg.sprite.id >= 8720 and msg.sprite.id <= 8814:
     if msg.sprite.height notin glyphHeights:glyphHeights.add(msg.sprite.height)
   if msg.kind == spkObject:
     doAssert msg.objectDef.id != 50_001, "removed right panel must not render"
-doAssert 7 in glyphHeights and 8 in glyphHeights
+doAssert glyphHeights == @[6], "use the original unscaled font glyphs"
 for size in [(1280,720),(1440,900),(1920,1080)]:
   let layout = frameLayout(0,0,748,941,size[0],size[1],true,true,sidebars=true)
   doAssert layout.railWidth == ViewerRailWidth
@@ -32,6 +32,20 @@ for size in [(1280,720),(1440,900),(1920,1080)]:
   doAssert layout.stage.width == layout.canvasWidth - ViewerRailWidth
   doAssert layout.scene.x >= ViewerRailWidth
   doAssert layout.scene.x + layout.scene.width <= layout.canvasWidth
+  let zoom = frameLayout(200,200,250,314,size[0],size[1],true,true,100,
+    conversation=true,worldWidth=748,worldHeight=941,sidebars=true)
+  doAssert zoom.railWidth == 0
+  doAssert zoom.scene.x == 0 and zoom.scene.y == 0
+  doAssert zoom.scene.width == zoom.canvasWidth and zoom.scene.height == zoom.canvasHeight
+
+# The rail and its hit target disappear from actual conversation packets.
+replay.applyReplaySeek(sim,850)
+let zoomPacket = sim.replayViewerFrame(replay,state,true)
+for msg in parseSpritePacket(zoomPacket):
+  if msg.kind == spkObject:
+    doAssert msg.objectDef.id notin [50_000,50_003,50_005]
+doAssert state.leaderboardButton.width == 0
+replay.applyReplaySeek(sim,799)
 state.setViewerSize(390,844)
 discard sim.replayViewerFrame(replay,state,true)
 proc toggle() =
@@ -50,4 +64,4 @@ let steady = sim.replayViewerFrame(replay,state,true)
 for msg in parseSpritePacket(steady):
   doAssert msg.kind != spkSprite, "stationary UI must reuse all sprite components"
 doAssert sim.gameHash() == initialHash
-echo "Left rail, intermediate fonts, narrow toggle, sprite reuse and unchanged game state passed"
+echo "Left rail, original font, narrow toggle, sprite reuse and unchanged game state passed"

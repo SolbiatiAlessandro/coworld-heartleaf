@@ -98,6 +98,9 @@ sim.directorTweenLeft = 0
 sim.queueDelayChat(sim.players[0].playerName,
   "A complete line stays readable while the portrait and parchment are reused.")
 privateAccess(typeof(sim.chatFeed[0]))
+privateAccess(typeof(sim.chatFeed[0].hearers[0]))
+sim.chatFeed[0].hearers = @[typeof(sim.chatFeed[0].hearers[0])(
+  name: sim.players[1].playerName, gnomeIndex: sim.players[1].gnomeIndex)]
 sim.advanceChatFeed(1)
 var next: PlayerViewerState
 let first = sim.buildGlobalPacket(state, next, replayControls=true)
@@ -110,8 +113,10 @@ for msg in parseSpritePacket(first):
   if msg.kind == spkSprite:
     labels[msg.sprite.id] = msg.sprite.label
     if msg.sprite.label.startsWith("director portrait"):
-      doAssert msg.sprite.width == 54 and msg.sprite.height == 54,
-        "portrait must use the full native pixel art"
+      doAssert msg.sprite.width == 81 and msg.sprite.height == 81,
+        "portrait must match the protruding portrait in the compact card"
+    if msg.sprite.label.startsWith("director glyph"):
+      doAssert msg.sprite.height == 6, "card lettering keeps the original font"
   if msg.kind == spkSprite:
     doAssert not msg.sprite.label.startsWith("director card 0")
 sim.chatFeed[0].message = "A different sentence updates the letters without resending the empty card."
@@ -132,18 +137,79 @@ for msg in parseSpritePacket(second):
     doAssert not msg.sprite.label.startsWith("viewer parchment frame")
   elif msg.kind == spkObject:
     let label = labels.getOrDefault(msg.objectDef.spriteId)
-    if label.startsWith("viewer glyph"): inc glyphs
+    if label.startsWith("director glyph"): inc glyphs
     doAssert msg.objectDef.id != 25_000, "director never shows the old bottom dialogue banner"
     if label.startsWith("director empty card"):
       inc backgrounds
       doAssert msg.objectDef.layer == 7
     if label.startsWith("director portrait"): inc portraits
-    if msg.objectDef.id >= 48_000 and msg.objectDef.id < 49_000:
+    if msg.objectDef.id >= 54_000 and msg.objectDef.id < 55_000:
       let id = msg.objectDef.spriteId
-      cardText.add(char(if id >= 15000: (id - 15000) mod 128 else: id - 8720 + 32))
+      cardText.add(char(id - 9400))
 doAssert glyphs > 20 and backgrounds == 1 and portraits == 1
-doAssert "Points: 27" in cardText and "Connections: 9" in cardText
+doAssert "points" notin cardText.toLowerAscii()
+doAssert "Best friends with " in cardText
+doAssert "Connections:" notin cardText
 doAssert "A different sentence" in cardText
+# The protruding portrait, segmented header and every letter remain on screen
+# when the viewer changes shape; the card must also clear the transport.
+for size in [(320,700),(390,844),(1280,600),(2560,720)]:
+  var resized = newReplayViewerState()
+  resized.setViewerSize(size[0],size[1])
+  let packet = sim.buildGlobalPacket(resized, next, replayControls=true)
+  var dimensions = initTable[int,tuple[w,h:int]]()
+  var cw,ch:int
+  for msg in parseSpritePacket(packet):
+    if msg.kind == spkViewport and msg.viewport.layer == 7:
+      cw = msg.viewport.width
+      ch = msg.viewport.height
+    if msg.kind == spkSprite:
+      dimensions[msg.sprite.id] = (msg.sprite.width,msg.sprite.height)
+  for msg in parseSpritePacket(packet):
+    if msg.kind == spkObject and (msg.objectDef.id in [28_000,28_100,28_200] or
+        msg.objectDef.id in 54_000..<55_000):
+      let obj = msg.objectDef
+      let extent = dimensions[obj.spriteId]
+      doAssert obj.x >= 0 and obj.x + extent.w <= cw
+      doAssert obj.y >= 0 and obj.y + extent.h <= ch - 42
+# One retained latest line per gnome, never a queued future turn. Distinct
+# identities prevent another gnome's card from overwriting cached artwork.
+block:
+  proc cardContents(packet: seq[uint8]): Table[int,string] =
+    var rows = initTable[int,int]()
+    for msg in parseSpritePacket(packet):
+      if msg.kind == spkObject and msg.objectDef.id in 54_000..<63_000:
+        let seat = (msg.objectDef.id-54_000) div 1000
+        if seat in rows and rows[seat] != msg.objectDef.y:
+          result.mgetOrPut(seat, "").add(" ")
+        rows[seat] = msg.objectDef.y
+        result.mgetOrPut(seat, "").add(char(msg.objectDef.spriteId-9400))
+  sim.queueDelayChat(sim.players[1].playerName, "Guest reply stays here.")
+  sim.queueDelayChat(sim.players[0].playerName, "Host speaks again.")
+  sim.queueDelayChat(sim.players[1].playerName, "Future secret line.")
+  var snapshot = cardContents(sim.buildGlobalPacket(state,next,replayControls=true))
+  doAssert snapshot.len == 1 and "Future" notin snapshot[0]
+  sim.advanceChatFeedNow(10)
+  snapshot = cardContents(sim.buildGlobalPacket(state,next,replayControls=true))
+  doAssert snapshot.len == 2
+  doAssert "Guest reply stays here." in snapshot[1]
+  sim.advanceChatFeedNow(20)
+  snapshot = cardContents(sim.buildGlobalPacket(state,next,replayControls=true))
+  doAssert snapshot.len == 2
+  doAssert "Host speaks again." in snapshot[0]
+  doAssert "A different sentence" notin snapshot[0]
+  doAssert "Guest reply stays here." in snapshot[1]
+  doAssert "Future" notin snapshot[1]
+  sim.chatFeed[2].encounterId = 91
+  sim.chatFeedScope = 91
+  snapshot = cardContents(sim.buildGlobalPacket(state,next,replayControls=true))
+  doAssert snapshot.len == 1 and 0 in snapshot,
+    "switching conversation must not retain another conversation's speakers"
+  sim.chatFeedScope = 0
+  # Restore the single-speaker fixture for the remaining layout tests.
+  sim.chatFeed.setLen(1)
+  sim.chatFeedIndex = 0
+
 # A wide shot or an unfinished zoom has no dialogue card.
 for transitioning in [true, false]:
   sim.directorTweenLeft = if transitioning: 10 else: 0
@@ -207,9 +273,49 @@ for msg in parseSpritePacket(sim.buildGlobalPacket(edgeState,next,replayControls
   if msg.kind==spkObject and msg.objectDef.id==28_000:
     relocated=true
     doAssert msg.objectDef.x < 176, "card must move away from the gnomes at the right edge"
-    doAssert msg.objectDef.y >= 106, "left card must clear the leaderboard"
+    doAssert msg.objectDef.y >= 18, "portrait must clear the window edge"
 doAssert relocated
 echo "Viewer stability checks passed"
+
+# All nine seats retain distinct protocol IDs (objects are uint16). Crowded
+# windows prioritize recent speakers rather than overlapping cards or controls.
+block:
+  let crowd = initSimServer(42)
+  for i in 0..8:
+    discard crowd.addPlayer("crowd " & $i,i)
+    crowd.players[i].mapIndex = 0
+    crowd.players[i].x = 300 + i*3
+    crowd.players[i].y = 300
+  crowd.directorFocusActive = true
+  crowd.directorFocusRadius = 80
+  crowd.directorFocusX = 330
+  crowd.directorFocusY = 330
+  crowd.directorFrameBlend = 1
+  crowd.directorCamX = 200
+  crowd.directorCamY = 170
+  crowd.directorCamW = 250
+  crowd.directorCamH = 314
+  for i in 0..8:
+    crowd.queueDelayChat(crowd.players[i].playerName,"Carrots for supper.")
+    crowd.advanceChatFeedNow(float(i*10))
+  var view = newReplayViewerState()
+  view.setViewerSize(1280,720)
+  let packet = crowd.buildGlobalPacket(view,next,replayControls=true)
+  var seats: seq[int]
+  var latestLetters = ""
+  var objects: seq[int]
+  for msg in parseSpritePacket(packet):
+    if msg.kind == spkObject:
+      let obj = msg.objectDef
+      if obj.id in 28_000..<28_009: seats.add(obj.id-28_000)
+      if obj.id in 54_000..<63_000:
+        doAssert obj.id notin objects, "card glyph object IDs must be unique"
+        objects.add(obj.id)
+      if obj.id in 62_000..<63_000:
+        latestLetters.add(char(obj.spriteId-9400))
+  doAssert seats.len == 6 and 8 in seats
+  doAssert "Carrots for supper." in latestLetters,
+    "the ninth gnome's glyph IDs must survive the uint16 wire format"
 
 # Concurrent conversations must finish, rewind, and resume without a stuck
 # playhead. Generate the recording here so CI needs no downloaded fixtures.

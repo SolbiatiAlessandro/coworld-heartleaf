@@ -6,6 +6,15 @@ import bitworld/[sprites, spriteprotocol]
 type Layer = object
   width, height, kind, flags: int
 
+proc decodeReviewPixels(compressed: seq[uint8]): seq[uint8] =
+  # The pinned decoder reads a 32-bit trailer even for a final 1/2-byte
+  # Snappy copy offset. Keep readable padding outside the logical input
+  # length; a page-aligned allocation otherwise faults in native release.
+  var padded = newSeq[uint8](compressed.len + 8)
+  for i, value in compressed: padded[i] = value
+  padded.setLen(compressed.len)
+  uncompress(padded)
+
 proc render*(packet: seq[uint8], width, height: int, path: string) =
   var
     sprites = initTable[int, RgbaSprite]()
@@ -15,7 +24,7 @@ proc render*(packet: seq[uint8], width, height: int, path: string) =
     case msg.kind
     of spkSprite:
       sprites[msg.sprite.id] = RgbaSprite(width: msg.sprite.width,
-        height: msg.sprite.height, pixels: uncompress(msg.sprite.compressedPixels))
+        height: msg.sprite.height, pixels: decodeReviewPixels(msg.sprite.compressedPixels))
     of spkLayer:
       layers.mgetOrPut(msg.layer.layer, Layer()).kind = msg.layer.kind
       layers[msg.layer.layer].flags = msg.layer.flags

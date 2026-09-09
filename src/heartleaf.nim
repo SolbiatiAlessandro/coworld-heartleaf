@@ -198,14 +198,14 @@ const
     ## conversations: a brisk automatic ~8X toward the next birth.
   PanelSliceInset = 10
     ## Keep the parchment corners crisp when sizing UI panels.
-  ViewerBodyHeight = 7
-  ViewerNameHeight = 8
-  ViewerGlyphBase = 15_000
+  ViewerBodyHeight = 6
+  ViewerNameHeight = 6
   DirectorCardWidth = ViewerCardWidth
-  DirectorCardPad = 12
-  DirectorCardPortraitSize = 54
+  DirectorCardPortraitSize = 81
   DirectorFrameSpriteId = 9300
-  DirectorCardFrameSpriteId = 9301
+  DirectorCardFrameSpriteId = 9800
+  DirectorCardHeaderSpriteId = 9900
+  DirectorCardGlyphBase = 9400
   DirectorCardFaceSpriteBase = 9150
   ViewerParchment = ColorRGBA(r: 213, g: 176, b: 114, a: 255)
   DirectorBounceHops = [2, 4, 6, 6, 5, 4, 2, 0, 2, 3, 3, 2, 1, 0]
@@ -400,6 +400,8 @@ type
     speaker: ChatFeedPerson
     hearers: seq[ChatFeedPerson]
     message: string
+    aired: bool
+      ## Shown by the feed in this camera shot; never expose queued future lines.
     encounterId: int
       ## The conversation this line was spoken in, from the replay's
       ## records; zero when unknown (live play, dinner talk, shouts).
@@ -412,8 +414,10 @@ type
 
   DirectorCard = object
     playerIndex: int
-    lines, relationLines: seq[string]
-    connections, height: int
+    lines: seq[string]
+    headerLines: array[2, seq[string]]
+    headerWidths: array[2, int]
+    width, height, portraitSize, frameY, headerX, headerY, headerHeight, textX, textY: int
 
   House = object
     rect: Rect
@@ -471,7 +475,6 @@ type
     viewerBricks: RgbaSprite
     viewerFrame: RgbaSprite
     viewerFrameKey: string
-    directorCardFrame: RgbaSprite
     homeMaps: array[HouseCount, WorldMap]
     resourceRects: seq[ResourceRect]
     homeResourceRects: seq[ResourceRect]
@@ -3291,6 +3294,7 @@ proc startDirectorTween(sim: SimServer) =
   ## Begins a timed camera glide from the current crop. The target is
   ## recomputed every frame, so a glide can chase a drifting ring and
   ## still land exactly on it when the countdown runs out.
+  for item in sim.chatFeed.mitems: item.aired = false
   sim.directorTweenLeft = DirectorTweenFrames
   sim.directorTweenFromX = sim.directorCamX
   sim.directorTweenFromY = sim.directorCamY
@@ -3369,6 +3373,7 @@ proc updateDirectorCamera*(sim: SimServer, snap = false) =
       sim.directorCamH = float(room.height) * 1.3
       sim.directorTweenLeft = 0
       sim.chatFeedIndex = -1
+      for item in sim.chatFeed.mitems: item.aired = false
     sim.directorFrameBlend = 1.0
     if snap:
       sim.directorCamX = 0
@@ -3573,43 +3578,29 @@ proc viewerTextWidth(sim: SimServer, text: string, height: int): int =
   for ch in text:
     result += sim.viewerGlyphWidth(ch, height) + 1
 
-proc viewerMessageLines(sim: SimServer, text: string, maxWidth, height: int): seq[string] =
+proc viewerMessageLines(sim: SimServer, text: string, maxWidth, height: int,
+    firstWidth = 0, firstRows = 0): seq[string] =
   var line = ""
+  template availableWidth(): int =
+    (if result.len < firstRows: firstWidth else: maxWidth)
   for word in text.splitWhitespace():
     if line.len > 0:
-      if sim.viewerTextWidth(line & " " & word, height) <= maxWidth:
+      if sim.viewerTextWidth(line & " " & word, height) <= availableWidth():
         line.add(" " & word)
         continue
       result.add(line)
       line = ""
     for ch in word:
-      if line.len > 0 and sim.viewerTextWidth(line & ch, height) > maxWidth:
+      if line.len > 0 and sim.viewerTextWidth(line & ch, height) > availableWidth():
         result.add(line)
         line = ""
       line.add(ch)
   if line.len > 0: result.add(line)
 
-proc activeDirectorCard(sim: SimServer): DirectorCard =
-  ## The line on air belongs to one gnome in the settled director shot.
-  ## Wide shots and camera travel do not show the old dialogue banner.
-  result.playerIndex = -1
-  if sim.directorTweenLeft > 0 or sim.chatFeedIndex < 0 or
-      sim.chatFeedIndex >= sim.chatFeed.len:
-    return
-  if sim.directorSceneMap == MainMapIndex and
-      (not sim.directorFocusActive or
-       sim.directorCamH >= float(sim.mainMap.height) * DirectorWideSnapRatio):
-    return
-  if not sim.chatFeedScopeMatches(sim.chatFeedIndex): return
-  let item = sim.chatFeed[sim.chatFeedIndex]
-  for i, player in sim.players:
-    if player.playerName == item.speaker.name and
-        player.mapIndex == sim.directorSceneMap:
-      result.playerIndex = i
-      break
-  if result.playerIndex < 0: return
+proc directorCard(sim: SimServer, item: ChatFeedItem, playerIndex, width: int): DirectorCard =
+  result.playerIndex = playerIndex
   let
-    player = sim.players[result.playerIndex]
+    player = sim.players[playerIndex]
     seat = player.homeFlag - HomeMapIndexBase
     heartPairs = if sim.conversationTimeline.events.len > 0:
       sim.conversationTimeline.heartLinksAt(sim.tickCount) else: sim.heartLinks
@@ -3620,9 +3611,7 @@ proc activeDirectorCard(sim: SimServer): DirectorCard =
         listener = i
         break
     if listener >= 0: break
-  var relation = ""
-  for pair in heartPairs:
-    if pair.a == seat or pair.b == seat: result.connections += pair.links
+  var relation = "Speaking"
   if listener >= 0:
     let otherSeat = sim.players[listener].homeFlag - HomeMapIndexBase
     var strength = 0
@@ -3631,17 +3620,47 @@ proc activeDirectorCard(sim: SimServer): DirectorCard =
           (pair.b == seat and pair.a == otherSeat):
         strength = pair.links
         break
-    const moods = ["neutral with ", "friend with ", "best friend with "]
+    const moods = ["Neutral towards ", "Friendly towards ", "Best friends with "]
     relation = moods[heartLinkTier(strength)] & sim.players[listener].playerName
-  result.lines = sim.viewerMessageLines(item.message,
-    DirectorCardWidth - DirectorCardPad * 2 - DirectorCardPortraitSize - 8, ViewerBodyHeight)
-  result.relationLines = sim.viewerMessageLines(relation,
-    DirectorCardWidth - DirectorCardPad * 2, ViewerBodyHeight)
-  let
-    lineHeight = ViewerBodyHeight + 3
-    bodyHeight = max(DirectorCardPortraitSize, ViewerNameHeight + 6 + result.lines.len * lineHeight)
-  result.height = max(96, bodyHeight + DirectorCardPad * 2 +
-    6 + lineHeight * (1 + result.relationLines.len))
+  result.width = width
+  result.portraitSize = DirectorCardPortraitSize
+  result.frameY = 14
+  result.textX = result.portraitSize + 13
+  result.textY = 24
+  result.lines = sim.viewerMessageLines(item.message, width - 28, ViewerBodyHeight,
+    firstWidth = width - result.textX - 12, firstRows = 7)
+  result.headerX = 6
+  result.headerWidths[0] = 42
+  result.headerWidths[1] = width - 12 - result.headerWidths[0]
+  for i, label in [player.playerName, relation]:
+    result.headerLines[i] = sim.viewerMessageLines(label, result.headerWidths[i] - 12, ViewerBodyHeight)
+    result.headerHeight = max(result.headerHeight, result.headerLines[i].len * 9 + 9)
+  # The portrait protrudes above the parchment; the light wooden identity
+  # strip straddles its bottom edge, as in the approved reference.
+  result.headerY = max(82, result.textY + result.lines.len * 9 + 10)
+  result.height = result.headerY + result.headerHeight
+
+proc activeDirectorCards(sim: SimServer, width: int): seq[DirectorCard] =
+  ## One card per gnome, containing their latest aired line in this shot.
+  ## Reading backwards also prioritizes recent speakers in a crowded window.
+  if sim.directorTweenLeft > 0 or sim.chatFeedIndex < 0 or
+      sim.chatFeedIndex >= sim.chatFeed.len:
+    return
+  if sim.directorSceneMap == MainMapIndex and
+      (not sim.directorFocusActive or
+       sim.directorCamH >= float(sim.mainMap.height) * DirectorWideSnapRatio):
+    return
+  if not sim.chatFeedScopeMatches(sim.chatFeedIndex): return
+  var speakers: seq[int]
+  for index in countdown(sim.chatFeedIndex, 0):
+    let item = sim.chatFeed[index]
+    if not item.aired or not sim.chatFeedScopeMatches(index): continue
+    for i, player in sim.players:
+      if i notin speakers and player.playerName == item.speaker.name and
+          player.mapIndex == sim.directorSceneMap:
+        result.add(sim.directorCard(item, i, width))
+        speakers.add(i)
+        break
 
 proc addDirectorFrame(
   packet: var seq[uint8], sim: SimServer,
@@ -3691,48 +3710,45 @@ proc hasCachedSprite(cache: seq[SpriteCacheEntry], id, width, height: int): bool
 
 proc addViewerText(packet: var seq[uint8], sim: SimServer,
     cache: var seq[SpriteCacheEntry], text: string, x, y: int,
-    slot: var int, height = ViewerBodyHeight, objectBase = 52_000) =
-  ## Size in logical pixels, independent of the window's integer UI scale.
+    slot: var int, height = ViewerBodyHeight, objectBase = 52_000, dark = false) =
+  ## Reuse the original Tiny5 glyphs and spacing, with no font resampling.
   var dx = x
   for ch in text:
-    let
-      width = sim.viewerGlyphWidth(ch, height)
-      id = ViewerGlyphBase + height * 128 + ord(ch)
-    if not cache.hasCachedSprite(id, width, height):
-      let source = sim.bannerGlyphSprite(ch)
-      var glyph = newRgbaSprite(width, height)
-      for gy in 0..<height:
-        for gx in 0..<width:
-          glyph.putPixel(gx,gy,source.rgbaSpriteAt(
-            gx * source.width div width, gy * source.height div height))
-      packet.addRgbaSpriteCached(cache,id,glyph,"viewer glyph " & $height & " " & $ch)
-    packet.addObject(objectBase+slot,dx,y,6,DirectorFrameLayerId,id)
+    let id = if dark: DirectorCardGlyphBase + ord(ch) else: ch.bannerGlyphSpriteId()
+    if dark and not cache.hasCachedSprite(id, sim.textFont.glyphAt(ch).width, sim.textFont.height):
+      var glyph = sim.bannerGlyphSprite(ch)
+      for i in countup(0, glyph.pixels.high, 4):
+        if glyph.pixels[i+3] > 0:
+          glyph.pixels[i] = 0x56
+          glyph.pixels[i+1] = 0x38
+          glyph.pixels[i+2] = 0x1f
+      packet.addRgbaSpriteCached(cache, id, glyph, "director glyph " & $ch)
+    packet.addObject(objectBase+slot,dx,y,6,DirectorFrameLayerId,
+      id)
     inc slot
-    dx += width + 1
+    dx += sim.textFont.glyphAdvance(ch)
 
 proc addDirectorCard(
   packet: var seq[uint8], sim: SimServer,
   cache: var seq[SpriteCacheEntry], card: DirectorCard, rect: ViewerRect
 ) =
-  ## Same single-gnome card as #35, sent as an empty frame, portrait,
-  ## rule and shared glyphs. A new line sends no whole-card image.
+  ## Cache each gnome's portrait, empty parchment and identity strip separately.
+  ## Only glyph objects change when their next line fits the same frame.
   if card.playerIndex < 0: return
   let
     player = sim.players[card.playerIndex]
-    pad = DirectorCardPad
     lineHeight = ViewerBodyHeight + 3
-    textX = rect.x + pad + DirectorCardPortraitSize + 4
-    ruleY = rect.y + card.height - pad -
-      lineHeight * (1 + card.relationLines.len) - 5
-  if sim.directorCardFrame.height != card.height:
-    sim.directorCardFrame = sim.chatBanner.nineSliceSprite(
-      DirectorCardWidth, card.height, PanelSliceInset)
-  packet.addRgbaSpriteCached(cache, DirectorCardFrameSpriteId,
-    sim.directorCardFrame, "director empty card frame " & $card.height)
-  packet.addObject(28_000, rect.x, rect.y, 1,
-    DirectorFrameLayerId, DirectorCardFrameSpriteId)
+    frameHeight = card.headerY + card.headerHeight div 2 - card.frameY
+    frameId = DirectorCardFrameSpriteId + card.playerIndex
+    headerId = DirectorCardHeaderSpriteId + card.playerIndex
+  if not cache.hasCachedSprite(frameId, card.width, frameHeight):
+    packet.addRgbaSpriteCached(cache, frameId,
+      sim.chatBanner.nineSliceSprite(card.width, frameHeight, PanelSliceInset),
+      "director empty card frame " & $card.playerIndex)
+  packet.addObject(28_000 + card.playerIndex, rect.x, rect.y + card.frameY, 1,
+    DirectorFrameLayerId, frameId)
   let source = sim.portraits[player.gnomeIndex mod sim.portraits.len]
-  var face = newRgbaSprite(DirectorCardPortraitSize, DirectorCardPortraitSize)
+  var face = newRgbaSprite(card.portraitSize, card.portraitSize)
   for y in 0 ..< face.height:
     for x in 0 ..< face.width:
       face.putPixel(x, y, source.rgbaSpriteAt(
@@ -3740,26 +3756,40 @@ proc addDirectorCard(
   let faceId = DirectorCardFaceSpriteBase + player.gnomeIndex
   packet.addRgbaSpriteCached(cache, faceId, face,
     "director portrait " & player.playerName)
-  var hop = 0
-  if card.playerIndex < sim.directorBounce.len and
-      sim.directorBounce[card.playerIndex] > 0:
-    hop = DirectorBounceHops[DirectorBounceHops.len - sim.directorBounce[card.playerIndex]]
-  packet.addObject(28_100, rect.x + pad, rect.y + pad - hop, 2,
+  packet.addObject(28_100 + card.playerIndex, rect.x + 7, rect.y, 2,
     DirectorFrameLayerId, faceId)
+  let
+    headerWidth = card.headerWidths[0] + card.headerWidths[1]
+    headerHeight = card.headerHeight
+  if not cache.hasCachedSprite(headerId, headerWidth, headerHeight):
+    var header = newRgbaSprite(headerWidth, headerHeight)
+    let w = headerWidth
+    let h = headerHeight
+    header.fillRect(2,0,w-5,h,rgba(130,87,50,255))
+    header.fillRect(0,3,w,h-6,rgba(130,87,50,255))
+    header.fillRect(3,1,w-7,h-2,rgba(196,153,98,255))
+    header.fillRect(1,4,w-2,h-8,rgba(196,153,98,255))
+    header.fillRect(4,2,w-9,1,rgba(237,207,150,255))
+    header.fillRect(2,4,1,h-9,rgba(237,207,150,255))
+    header.fillRect(3,h-3,w-7,2,rgba(170,120,68,255))
+    let x = card.headerWidths[0]
+    header.fillRect(x,2,1,h-4,rgba(130,87,50,255))
+    header.fillRect(x+1,3,1,h-6,rgba(237,207,150,255))
+    packet.addRgbaSpriteCached(cache, headerId, header, "director name and relationship")
+  packet.addObject(28_200 + card.playerIndex, rect.x + card.headerX, rect.y + card.headerY, 3,
+    DirectorFrameLayerId, headerId)
   var glyphSlot = 0
-  template textRun(text: string, x, y: int, height: int = ViewerBodyHeight) =
-    packet.addViewerText(sim, cache, text, x, y, glyphSlot, height, 48_000)
-  textRun(player.playerName, textX, rect.y + pad, ViewerNameHeight)
+  template textRun(text: string, x, y: int) =
+    packet.addViewerText(sim, cache, text, x, y, glyphSlot, ViewerBodyHeight, 54_000 + card.playerIndex * 1_000, dark = true)
+  var columnX = rect.x + card.headerX
+  for column, lines in card.headerLines:
+    for i, line in lines:
+      textRun(line, columnX + (card.headerWidths[column] - sim.viewerTextWidth(line, ViewerBodyHeight)) div 2,
+        rect.y + card.headerY + (headerHeight - lines.len * 9 + 3) div 2 + i * 9)
+    columnX += card.headerWidths[column]
   for i, line in card.lines:
-    textRun(line, textX, rect.y + pad + ViewerNameHeight + 6 + i * lineHeight)
-  let rule = solidRgbaSprite(DirectorCardWidth - pad * 2, 1, rgba(178, 138, 90, 255))
-  packet.addRgbaSpriteCached(cache, 9302, rule, "director card rule")
-  packet.addObject(28_101, rect.x + pad, ruleY, 2, DirectorFrameLayerId, 9302)
-  textRun("Points: " & $player.score, rect.x + pad, ruleY + 3)
-  let connections = "Connections: " & $card.connections
-  textRun(connections, rect.x + DirectorCardWidth - pad - sim.viewerTextWidth(connections,ViewerBodyHeight), ruleY + 3)
-  for i, line in card.relationLines:
-    textRun(line, rect.x + pad, ruleY + 3 + (i + 1) * lineHeight)
+    textRun(line, rect.x + (if i < 7: card.textX else: 14),
+      rect.y + card.textY + i * lineHeight)
 
 proc ensureViewerTitle(sim: SimServer) =
   ## Reuse the game's existing pixel-art wooden wordmark and heart-leaf ornament.
@@ -3854,55 +3884,70 @@ proc addDirectorWorldView(
   replayControls, forestBackdrop: bool,
   state: PlayerViewerState
 ) =
-  ## World and room scenes share a framed crop and one on-air card.
+  ## World and room scenes share a framed crop and cards for the aired speakers.
   let
     tintIndex = sim.dayTintIndex()
-    card = sim.activeDirectorCard()
+    canvasWidth = frameLayout(0,0,1,1,frameWidth,frameHeight,true,replayControls,
+      sidebars=true).canvasWidth
     conversation = sim.directorFocusActive or sim.directorFrameBlend > 0 or
       sim.directorSceneMap != MainMapIndex
-    cardHeight = if conversation:
-      max(96, card.height) else: 0
     cropWidth = if forestBackdrop and sim.directorSceneMap == MainMapIndex:
       sim.directorCamW + max(0.0, sim.directorCamH * 1.5 - sim.directorCamW) *
         (1.0 - sim.directorFrameBlend)
       else: sim.directorCamW
   var layout = frameLayout(sim.directorCamX - (cropWidth - sim.directorCamW) / 2,
       sim.directorCamY, cropWidth, sim.directorCamH, frameWidth, frameHeight,
-      sim.players.len > 0, replayControls, cardHeight, conversation,
+      sim.players.len > 0, replayControls, 0, conversation,
       (if sim.directorSceneMap == MainMapIndex: sim.mainMap.width else: 0),
       (if sim.directorSceneMap == MainMapIndex: sim.mainMap.height else: 0),
       focusBlend = sim.directorFrameBlend,
       overviewAspect = (if forestBackdrop: 1.5 else: 0.0), sidebars = true)
-  if card.playerIndex >= 0:
-    # The card overlays the full-screen scene. Prefer the usual right
-    # position, then choose a clear edge when a gnome occupies it.
-    let scale = min(float(layout.canvasWidth) / float(layout.width),
-      float(layout.canvasHeight) / float(layout.height))
-    proc overlapScore(rect: ViewerRect): int =
-      for player in sim.players:
-        if player.mapIndex != sim.directorSceneMap: continue
-        let
-          x = int(float(player.x - layout.x - 4) * scale)
-          y = int(float(player.y - layout.y - 36) * scale)
-          w = int(ceil(float(GnomeSpriteSize + 8) * scale))
-          h = int(ceil(float(GnomeSpriteSize + 40) * scale))
-        result += max(0, min(rect.x + rect.width, x + w) - max(rect.x, x)) *
-          max(0, min(rect.y + rect.height, y + h) - max(rect.y, y))
-    var best = overlapScore(layout.card)
-    let
-      bottom = layout.canvasHeight - (if replayControls: 54 else: 14) - card.height
-      right = layout.stage.x + layout.stage.width - DirectorCardWidth - 14
-    for position in [(layout.stage.x + 14, layout.card.y), (right, bottom),
-        (layout.stage.x + 14, bottom), (right, 18)]:
-      let candidate = ViewerRect(x: position[0], y: position[1],
-        width: DirectorCardWidth, height: card.height)
-      if candidate.x < layout.stage.x or candidate.x + candidate.width >
-          layout.stage.x + layout.stage.width: continue
-      if candidate.y < 0 or candidate.y + candidate.height > layout.canvasHeight: continue
-      let score = overlapScore(candidate)
-      if score < best:
-        layout.card = candidate
-        best = score
+  var cards = sim.activeDirectorCards(min(DirectorCardWidth, max(160, canvasWidth - 28)))
+  var tallest = 0
+  for card in cards: tallest = max(tallest,card.height)
+  let columns = max(1,min(3,(layout.canvasWidth-20) div (DirectorCardWidth+8)))
+  let capacity = columns * max(1,(layout.canvasHeight-72) div max(1,tallest+8))
+  if cards.len > capacity: cards.setLen(capacity)
+  # Stable speaker order keeps cards from exchanging sides on each turn.
+  cards.sort(proc(a,b: DirectorCard): int = cmp(a.playerIndex,b.playerIndex))
+  var placed: seq[tuple[card: DirectorCard, rect: ViewerRect]]
+  # Fill clear edges first. Recent speakers have priority if a small window
+  # cannot hold every card; never overlap cards or the transport.
+  let scale = min(float(layout.canvasWidth) / float(layout.width),
+    float(layout.canvasHeight) / float(layout.height))
+  proc overlapArea(a, b: ViewerRect): int =
+    max(0, min(a.x+a.width,b.x+b.width)-max(a.x,b.x)) *
+      max(0, min(a.y+a.height,b.y+b.height)-max(a.y,b.y))
+  for card in cards:
+    var best = high(int)
+    var chosen: ViewerRect
+    let bottom = layout.canvasHeight - (if replayControls: 54 else: 14) - card.height
+    for x in [14, layout.canvasWidth - card.width - 14,
+        (layout.canvasWidth - card.width) div 2]:
+      for y in countup(18, bottom, 6):
+        let candidate = ViewerRect(x:x,y:y,width:card.width,height:card.height)
+        var blocked = false
+        for other in placed:
+          var padded = other.rect
+          padded.x -= 4; padded.y -= 4
+          padded.width += 8; padded.height += 8
+          if overlapArea(candidate,padded)>0: blocked = true
+        if blocked: continue
+        # Keep the center of the world open and prefer the bottom corners.
+        var score = bottom-y
+        if x == (layout.canvasWidth-card.width) div 2: score += 1000
+        for player in sim.players:
+          if player.mapIndex != sim.directorSceneMap: continue
+          let bounds = ViewerRect(
+            x:int(float(player.x-layout.x-4)*scale),
+            y:int(float(player.y-layout.y-36)*scale),
+            width:int(ceil(float(GnomeSpriteSize+8)*scale)),
+            height:int(ceil(float(GnomeSpriteSize+40)*scale)))
+          score += overlapArea(candidate,bounds)*100
+        if score < best:
+          best = score
+          chosen = candidate
+    if best < high(int): placed.add((card,chosen))
   let
     cameraX = layout.x
     cameraY = layout.y
@@ -3969,8 +4014,12 @@ proc addDirectorWorldView(
   packet.addObject(OverhangObjectId, -cameraX, -cameraY,
     OverhangZ, MapLayerId, topId)
   packet.addDirectorFrame(sim, cache, layout)
-  packet.addDirectorCard(sim, cache, card, layout.card)
-  packet.addViewerChrome(sim, state, layout)
+  for item in placed:
+    packet.addDirectorCard(sim, cache, item.card, item.rect)
+  if not conversation:
+    packet.addViewerChrome(sim, state, layout)
+  else:
+    state.leaderboardButton = ViewerRect()
   packet.addClockObjects(sim)
 
 proc replayCommandAt(layer, x, y: int): char =
@@ -5314,6 +5363,7 @@ proc advanceChatFeed*(sim: SimServer, now = epochTime()) =
     let first = sim.chatFeedNextIndex(0)
     if first >= 0:
       sim.chatFeedIndex = first
+      sim.chatFeed[first].aired = true
       sim.chatFeedShownAt = now
     return
   if sim.chatFeedIndex >= sim.chatFeed.len or
@@ -5324,21 +5374,23 @@ proc advanceChatFeed*(sim: SimServer, now = epochTime()) =
     let next = sim.chatFeedNextIndex(sim.chatFeedIndex)
     if next >= 0:
       sim.chatFeedIndex = next
+      sim.chatFeed[next].aired = true
       sim.chatFeedShownAt = now
     else:
       sim.chatFeedIndex = sim.chatFeed.len
     return
+  sim.chatFeed[sim.chatFeedIndex].aired = true
   if now - sim.chatFeedShownAt < ChatFeedShowSeconds:
     return
   let next = sim.chatFeedNextIndex(sim.chatFeedIndex + 1)
   if next >= 0:
     sim.chatFeedIndex = next
+    sim.chatFeed[next].aired = true
     sim.chatFeedShownAt = now
 
 proc advanceChatFeedNow*(sim: SimServer, now = epochTime()) =
-  ## Steps the delay chat to the next line right away: the voice for
-  ## the line on screen has finished, so its card leaves with it
-  ## instead of lingering out the wall-clock timer.
+  ## Steps the delay chat to the next line when its voice finishes. The
+  ## director retains each gnome's latest aired line in their own card.
   if sim.convQueue.len > 0 and not sim.convQueueCommitted and
       sim.directorSceneMap == MainMapIndex:
     # Between queue commitments nothing airs; see advanceChatFeed.
@@ -5352,9 +5404,11 @@ proc advanceChatFeedNow*(sim: SimServer, now = epochTime()) =
       not sim.chatFeedScopeMatches(sim.chatFeedIndex):
     sim.advanceChatFeed(now)
     return
+  sim.chatFeed[sim.chatFeedIndex].aired = true
   let next = sim.chatFeedNextIndex(sim.chatFeedIndex + 1)
   if next >= 0:
     sim.chatFeedIndex = next
+    sim.chatFeed[next].aired = true
     sim.chatFeedShownAt = now
 
 proc step*(sim: SimServer, inputs: openArray[InputState]) =
