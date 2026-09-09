@@ -30,6 +30,28 @@ resources, replay format, and game rules.
 - Native and static replays share queue, camera and dialogue stepping at 24 Hz.
   The static build uses the director and unsigned 32-bit visual noise arithmetic.
 
+## Leafy Heartleaf title
+
+The left panel now carries a large Heartleaf wooden sign with cream lettering,
+curling vines and a green heart-leaf ornament. This reuses `data/logo.aseprite`;
+the original asset is unchanged. The wordmark is cropped away from the upper
+cottage illustration, follows the sign's bowed edge, and uses nearest-pixel
+sampling. It is loaded once and sent as a cached sprite.
+
+The second art iteration removes the strip of scenery above the lettering and
+adds space around the sign. Header and row spacing keep all nine gnomes visible
+in the checked desktop, laptop, narrow portrait and 1280×600 layouts.
+
+Regenerate these protocol renders with:
+`nim r tools/render_viewer_brand.nim out/title-review`.
+
+![Leafy Heartleaf leaderboard title](viewer-stability/title-01-overview.png)
+
+[Conversation view](viewer-stability/title-04-conversation.png) ·
+[Laptop](viewer-stability/title-02-laptop.png) ·
+[Narrow panel](viewer-stability/title-03-narrow.png) ·
+[Short window](viewer-stability/title-05-short-window.png)
+
 ## Conversation navigation and readability
 
 - The leaderboard sits to the left of the map, sorted by points. Recorded

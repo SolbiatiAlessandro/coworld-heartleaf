@@ -464,6 +464,7 @@ type
   SimServer* = ref object
     mainMap: WorldMap
     viewerBrown: RgbaSprite
+    viewerTitle: RgbaSprite
     viewerFrame: RgbaSprite
     viewerFrameKey: string
     directorCardFrame: RgbaSprite
@@ -3727,6 +3728,30 @@ proc addDirectorCard(
   for i, line in card.relationLines:
     textRun(line, rect.x + pad, ruleY + 3 + (i + 1) * lineHeight)
 
+proc ensureViewerTitle(sim: SimServer) =
+  ## Reuse the game's existing pixel-art wooden wordmark and heart-leaf ornament.
+  ## The upper cottage illustration is omitted to keep nine leaderboard rows.
+  if sim.viewerTitle.width > 0: return
+  let source = readAsepriteImage(dataDir() / "logo.aseprite")
+  const
+    CropX = 14
+    CropY = 129
+    CropWidth = 192
+    CropHeight = 81
+    Width = ViewerRailWidth - 12
+  let height = CropHeight * Width div CropWidth
+  sim.viewerTitle = newRgbaSprite(Width, height)
+  for y in 0 ..< height:
+    for x in 0 ..< Width:
+      let
+        sx = CropX + x * CropWidth div Width
+        sy = CropY + y * CropHeight div height
+        # Follow the sign's bowed upper edge, excluding the cottage lawn
+        # above it instead of leaving a hard rectangular strip of scenery.
+        edge = 130 + int(6.0 * sin(PI * float(sx - CropX) / float(CropWidth)))
+      if sy >= edge:
+        sim.viewerTitle.putPixel(x, y, source[sx, sy])
+
 proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
     state: PlayerViewerState, layout: ViewerLayout, card: DirectorCard,
     replayControls: bool) =
@@ -3774,18 +3799,27 @@ proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
   if wide or state.openPanel == 1:
     let panel = ViewerRect(x:2,y:panelY,width:ViewerRailWidth-4,height:panelH)
     frame(9850,50_000,panel)
-    text("Leaderboard",panel.x+12,panel.y+12,2)
+    sim.ensureViewerTitle()
+    packet.addRgbaSpriteCached(state.spriteCache, 9855, sim.viewerTitle,
+      "Heartleaf leafy wordmark")
+    packet.addObject(50_005, panel.x + (panel.width - sim.viewerTitle.width) div 2,
+      panel.y + 12, 5, DirectorFrameLayerId, 9855)
+    let headingY = panel.y + 12 + sim.viewerTitle.height + 8
+    let headingZoom = if panelH >= 310: 2 else: 1
+    text("Leaderboard", panel.x + (panel.width - sim.chatTextWidth("Leaderboard") * headingZoom) div 2,
+      headingY, headingZoom)
+    let rowsTop = headingY - panel.y + (if headingZoom == 2: 23 else: 12)
     var order: seq[int]
     for i in 0..<sim.players.len: order.add(i)
     order.sort(proc(a,b:int):int = cmp(sim.players[b].score,sim.players[a].score))
-    let rowH = min(32, max(22,(panelH-40) div max(1,order.len)))
+    let rowH = min(32, max(20,(panelH-rowsTop-8) div max(1,order.len)))
     for rank, i in order:
       let p = sim.players[i]
-      let y = panel.y+36+rank*rowH
-      if y+22 > panel.y+panelH-8: break
-      portrait(p.homeFlag-HomeMapIndexBase,panel.x+10,y)
+      let y = panel.y+rowsTop+rank*rowH
+      if y + min(22,rowH) > panel.y+panelH-8: break
+      portrait(p.homeFlag-HomeMapIndexBase,panel.x+10,y,min(20,rowH))
       text(p.playerName,panel.x+34,y,2)
-      text($p.score & " points",panel.x+34,y+15)
+      text($p.score & " points",panel.x+34,y+(if rowH >= 22: 15 else: 13))
   if wide or state.openPanel == 2:
     let panel = ViewerRect(x:cw-ViewerRailWidth+2,y:panelY,width:ViewerRailWidth-4,height:panelH)
     frame(9851,50_001,panel)
