@@ -19,7 +19,7 @@ proc frameLayout*(
   conversation = false,
   worldWidth = 0, worldHeight = 0
 ): ViewerLayout =
-  ## The full village fits the available height. Conversation shots
+  ## The full village fits the entire window with UI overlaid. Conversation shots
   ## fill the window with a wider camera crop and overlay their card.
   let
     fw = float(if frameWidth > 0: frameWidth else: 1280)
@@ -35,7 +35,6 @@ proc frameLayout*(
   let
     cw = result.canvasWidth
     ch = result.canvasHeight
-    top = if hasPlayers and cw < ch: 106 else: 18
     bottom = if replayControls: 50 else: 8
   if conversation:
     result.scene = ViewerRect(width: cw, height: ch)
@@ -71,8 +70,8 @@ proc frameLayout*(
         result.card.y = ch - bottom - cardHeight - 4
     return
   let
-    availableWidth = max(32, cw - 16)
-    availableHeight = max(32, ch - top - bottom)
+    availableWidth = max(32, cw)
+    availableHeight = max(32, ch)
   let
     scale = max(max(float(cw), float(ch)) / 8192.0,
       min(float(max(1, availableWidth - ViewerBorder * 2)) / max(1.0, cropWidth),
@@ -80,8 +79,8 @@ proc frameLayout*(
     sceneWidth = int(round(cropWidth * scale)) + ViewerBorder * 2
     sceneHeight = int(round(cropHeight * scale)) + ViewerBorder * 2
   result.scene = ViewerRect(
-    x: 8 + (availableWidth - sceneWidth) div 2,
-    y: top + (availableHeight - sceneHeight) div 2,
+    x: (availableWidth - sceneWidth) div 2,
+    y: (availableHeight - sceneHeight) div 2,
     width: sceneWidth, height: sceneHeight)
   result.width = max(1, int(ceil(float(cw) / scale)))
   result.height = max(1, int(ceil(float(ch) / scale)))

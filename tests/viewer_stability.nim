@@ -25,7 +25,16 @@ for size in [(1280,720), (1024,768), (768,1024), (390,844)]:
   doAssert framed.scene.x == 0 and framed.scene.y == 0
   doAssert framed.scene.width == framed.canvasWidth
   doAssert framed.scene.height == framed.canvasHeight
-  doAssert layout.scene.height < layout.canvasHeight
+  if size[0] >= size[1]:
+    doAssert layout.scene.y == 0
+    doAssert layout.scene.height == layout.canvasHeight,
+      "the overview must use the full height, with UI overlaid"
+  else:
+    doAssert layout.scene.width == layout.canvasWidth,
+      "narrow windows must keep the whole village visible"
+  let liveOverview = frameLayout(0, 0, 748, 941, size[0], size[1], true, false)
+  doAssert liveOverview.scene == layout.scene,
+    "replay transport must not shrink the overview"
   let roomView = frameLayout(0,0,250,250,size[0],size[1],true,true,96,
     conversation=true)
   let roomScale = min(float(roomView.canvasWidth)/float(roomView.width),

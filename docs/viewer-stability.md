@@ -5,9 +5,11 @@ resources, replay format, and game rules.
 
 - Light parchment (`#d5b072`) fills the surround. The map uses the existing
   pixel-art wooden and leafy border. A fixed frame masks overflow during zoom.
-- The full-village overview fits the available height. Conversation shots
+- The full-village overview fills the window height with controls overlaid. Conversation shots
   fill the window with a wider camera crop, without stretching the map.
   Crops stay inside the village art at map edges and in ultrawide windows.
+  In narrow portrait windows, the overview fits the width to keep the whole
+  village visible. Playback controls never reduce its size.
 - The settled director shot shows the current speaker's card: one portrait,
   name, full recorded line, points, connection points, and relation to the listener.
   The card overlays a clear edge of the full-screen scene and moves aside if
@@ -82,7 +84,9 @@ settled, and night. The complete circular room clears the transport. No black
 bars or opaque exterior room rectangle appeared in those renders. Intended
 night shading inside the room is preserved.
 
-![Village overview fitted to available height](viewer-stability/rendered-wide.png)
+![Village overview filling the window height](viewer-stability/rendered-wide.png)
+
+![Portrait overview preserving the whole village](viewer-stability/rendered-wide-portrait.png)
 
 ![Full-screen conversation and smaller pixel emojis](viewer-stability/rendered-director-card.png)
 

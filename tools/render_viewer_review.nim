@@ -117,6 +117,7 @@ proc capture(name: string, width=1280, height=720, forest=false) =
   render(sim.buildGlobalPacket(state,next,replayControls=true,
     replayTick=sim.tickCount,replayMaxTick=9120),width,height,output/name)
 capture("rendered-wide.png")
+capture("rendered-wide-portrait.png",768,1024)
 capture("rendered-forest.png",forest=true)
 sim.directorFocusActive=true
 sim.directorFocusX=440

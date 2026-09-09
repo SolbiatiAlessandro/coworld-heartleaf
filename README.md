@@ -194,7 +194,7 @@ MIT
 
 The director preserves the original village and uses light parchment framing
 with the existing pixel-art wooden/leaf border by default. The full village
-fits the available height; conversation shots fill the window.
+fills the window height with controls overlaid; conversation shots fill the window.
 Use `?background=forest` to compare the optional forest surround (art review
 pending). A zoomed conversation shows its current speaker's card with portrait,
 dialogue, points and connections. The card uses reusable parts, and emojis sit
