@@ -40,6 +40,8 @@ jobs:
       - name: Viewer and route regressions
         run: |
           nim r tests/viewer_stability.nim
+          nim r tests/viewer_navigation.nim
+          node tests/viewer_feedback.cjs
           nim r tests/routes.nim
           nim r tools/record_viewer_scenario.nim out/viewer-scenario.replay
 

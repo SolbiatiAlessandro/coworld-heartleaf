@@ -34,6 +34,8 @@ when defined(emscripten):
   const OutputDir = WasmDir / "dist"
   if not dirExists(OutputDir):
     mkDir(OutputDir)
+  writeFile(OutputDir / "shell.html", readFile(WasmDir / "shell.html").replace(
+    "<!-- VIEWER_FEEDBACK -->", "<script>" & readFile(RepoDir / "data" / "viewer-feedback.js") & "</script>"))
   switch("nimcache", OutputDir / "tmp")
   switch("outdir", OutputDir)
   switch("threads", "off")
@@ -59,7 +61,7 @@ when defined(emscripten):
     -o {OutputDir / "replay_viewer"}.html
     --preload-file {RepoDir / "data"}@data
     --preload-file {BitworldRoot / "client" / "dist"}@dist
-    --shell-file {WasmDir / "shell.html"}
+    --shell-file {OutputDir / "shell.html"}
     -O2
     -s ASYNCIFY
     -s FETCH

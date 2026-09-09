@@ -1,7 +1,10 @@
 ## Presentation geometry. World coordinates and gameplay stay unchanged.
 import std/math
 
-const ViewerBorder* = 10
+const
+  ViewerBorder* = 10
+  ViewerCardWidth* = 236
+  ViewerRailWidth* = 150
 
 type
   ViewerRect* = object
@@ -9,7 +12,8 @@ type
   ViewerLayout* = object
     width*, height*, x*, y*: int
     canvasWidth*, canvasHeight*: int
-    scene*, card*: ViewerRect
+    scene*, card*, stage*: ViewerRect
+    railWidth*: int
 
 proc frameLayout*(
   cropX, cropY, cropWidth, cropHeight: float,
@@ -18,10 +22,10 @@ proc frameLayout*(
   cardHeight = 0,
   conversation = false,
   worldWidth = 0, worldHeight = 0,
-  focusBlend = 1.0, overviewAspect = 0.0
+  focusBlend = 1.0, overviewAspect = 0.0, sidebars = false
 ): ViewerLayout =
-  ## The full village fits the entire window with UI overlaid. Conversation shots
-  ## fill the window with a wider camera crop and overlay their card.
+  ## The village fits the stage between optional sidebars. Conversation shots
+  ## fill that stage with a wider crop and overlay their current-speaker card.
   let
     fw = float(if frameWidth > 0: frameWidth else: 1280)
     fh = float(if frameHeight > 0: frameHeight else: 720)
@@ -31,31 +35,36 @@ proc frameLayout*(
         fh >= 128.0 * float(zoom) * 1.5:
       uiZoom = float(zoom)
       break
+  if sidebars and fw < 1800 and uiZoom > 2: uiZoom = 2
   result.canvasWidth = int(fw / uiZoom)
   result.canvasHeight = int(fh / uiZoom)
   let
     cw = result.canvasWidth
     ch = result.canvasHeight
     bottom = if replayControls: 50 else: 8
+    rail = if sidebars and cw >= 600 and cw > ch: ViewerRailWidth else: 0
+    sw = cw - rail * 2
+  result.railWidth = rail
+  result.stage = ViewerRect(x: rail, width: sw, height: ch)
   if conversation:
-    result.scene = ViewerRect(width: cw, height: ch)
+    result.scene = ViewerRect(x: rail, width: sw, height: ch)
     let blend = clamp(focusBlend, 0.0, 1.0)
     if blend == 0 and worldWidth > 0:
       return frameLayout(cropX,cropY,cropWidth,cropHeight,
-        frameWidth,frameHeight,hasPlayers,replayControls)
+        frameWidth,frameHeight,hasPlayers,replayControls, sidebars = sidebars)
     var boundsWidth = float(worldWidth)
     if worldWidth > 0 and worldHeight > 0:
       # Interpolate the visible frame as well as the camera crop. Switching
       # directly to a full-window frame would force an instant zoom just
       # to keep that wider rectangle inside the map.
       let wideWidth = max(float(worldWidth), float(worldHeight) * overviewAspect)
-      let wideScale = min(float(cw - ViewerBorder * 2) / wideWidth,
+      let wideScale = min(float(sw - ViewerBorder * 2) / wideWidth,
         float(ch - ViewerBorder * 2) / float(worldHeight))
       let wideW = int(round(wideWidth * wideScale)) + ViewerBorder * 2
       let wideH = int(round(float(worldHeight) * wideScale)) + ViewerBorder * 2
-      result.scene.width = int(round(float(wideW) + float(cw - wideW) * blend))
+      result.scene.width = int(round(float(wideW) + float(sw - wideW) * blend))
       result.scene.height = int(round(float(wideH) + float(ch - wideH) * blend))
-      result.scene.x = (cw - result.scene.width) div 2
+      result.scene.x = rail + (sw - result.scene.width) div 2
       result.scene.y = (ch - result.scene.height) div 2
       boundsWidth = wideWidth + (float(worldWidth) - wideWidth) * blend
     let
@@ -87,16 +96,16 @@ proc frameLayout*(
     result.x = int(round(left - float(result.scene.x + ViewerBorder) / scale))
     result.y = int(round(top - float(result.scene.y + ViewerBorder) / scale))
     if cardHeight > 0:
-      result.card = ViewerRect(width: 158, height: cardHeight)
-      if cw >= 480 and cw > ch:
-        result.card.x = cw - 158 - 14
+      result.card = ViewerRect(width: ViewerCardWidth, height: cardHeight)
+      if sw >= 480 and sw > ch:
+        result.card.x = rail + sw - ViewerCardWidth - 14
         result.card.y = (ch - cardHeight) div 2
       else:
-        result.card.x = (cw - 158) div 2
+        result.card.x = rail + (sw - ViewerCardWidth) div 2
         result.card.y = ch - bottom - cardHeight - 4
     return
   let
-    availableWidth = max(32, cw)
+    availableWidth = max(32, sw)
     availableHeight = max(32, ch)
   let
     scale = max(max(float(cw), float(ch)) / 8192.0,
@@ -105,7 +114,7 @@ proc frameLayout*(
     sceneWidth = int(round(cropWidth * scale)) + ViewerBorder * 2
     sceneHeight = int(round(cropHeight * scale)) + ViewerBorder * 2
   result.scene = ViewerRect(
-    x: (availableWidth - sceneWidth) div 2,
+    x: rail + (availableWidth - sceneWidth) div 2,
     y: (availableHeight - sceneHeight) div 2,
     width: sceneWidth, height: sceneHeight)
   result.width = max(1, int(ceil(float(cw) / scale)))

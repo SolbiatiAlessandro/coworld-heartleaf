@@ -81,6 +81,7 @@ const
   ReplayCenterBottomLayerId = 4
   ReplayMismatchLayerId = 6
   DirectorFrameLayerId = 7
+  ViewerUiScaleLayerId = 8
   MapLayerKind = 0
   GlobalPanelLayerKind = 1
   UiLayerKind = 3
@@ -197,7 +198,7 @@ const
     ## conversations: a brisk automatic ~8X toward the next birth.
   PanelSliceInset = 10
     ## Keep the parchment corners crisp when sizing UI panels.
-  DirectorCardWidth = 158
+  DirectorCardWidth = ViewerCardWidth
   DirectorCardPad = 12
   DirectorCardPortraitSize = 54
   DirectorFrameSpriteId = 9300
@@ -574,6 +575,7 @@ type
       ## While committed, the encounter id whose lines the delay-chat
       ## cursor may air; other circles' lines are skipped. Zero airs
       ## everything.
+    directorOverviewOnly: bool
     directorCommitEncounter: int
       ## While positive, the director camera belongs to this
       ## encounter: no dwell rotation, no tour, until the queue
@@ -592,6 +594,10 @@ type
     dayNumber: int
     scoreTicks: int
     dinnerDone: bool
+
+  ViewerAction = object
+    rect: ViewerRect
+    conversationIndex: int  # -1 overview, -2/-3 pages, -4/-5 narrow panel toggles
 
   PlayerViewerState* = ref object
     initialized: bool
@@ -620,6 +626,9 @@ type
     scrubbingReplay: bool
     replaySeekTick: int
     replayCommands: seq[char]
+    viewerActions: seq[ViewerAction]
+    conversationPage: int
+    openPanel: int
 
   RunConfig = ref object
     address: string
@@ -3337,7 +3346,7 @@ proc updateDirectorCamera*(sim: SimServer, snap = false) =
     if host >= 0 and sim.players[host].mapIndex == mapIndex and
         sim.homeVisitors(mapIndex, host).len > 0:
       dinnerHouses.add(houseIndex)
-  if dinnerHouses.len > 0:
+  if dinnerHouses.len > 0 and not sim.directorOverviewOnly:
     if sim.directorDinnerTtl <= 0 or
         sim.directorDinnerHouse notin dinnerHouses:
       var next = dinnerHouses[0]
@@ -3461,8 +3470,8 @@ proc updateDirectorCamera*(sim: SimServer, snap = false) =
   # queue attached (replay playback) the tour never picks: between
   # conversations the playhead fast-forwards in the wide shot, and
   # commitment alone brings the camera in. Live games keep the tour.
-  if not sim.directorFocusActive and sim.directorCommitEncounter == 0 and
-      sim.convQueue.len == 0:
+  if not sim.directorOverviewOnly and not sim.directorFocusActive and
+      sim.directorCommitEncounter == 0 and sim.convQueue.len == 0:
     if sim.conversationCircles.len > 0 and
         sim.directorTweenLeft <= 0 and
         sim.directorCamH >= mapH * DirectorWideSnapRatio:
@@ -3562,7 +3571,7 @@ proc activeDirectorCard(sim: SimServer): DirectorCard =
   ## The line on air belongs to one gnome in the settled director shot.
   ## Wide shots and camera travel do not show the old dialogue banner.
   result.playerIndex = -1
-  if sim.directorTweenLeft > 0 or sim.chatFeedIndex < 0 or
+  if sim.directorOverviewOnly or sim.directorTweenLeft > 0 or sim.chatFeedIndex < 0 or
       sim.chatFeedIndex >= sim.chatFeed.len:
     return
   if sim.directorSceneMap == MainMapIndex and
@@ -3603,12 +3612,12 @@ proc activeDirectorCard(sim: SimServer): DirectorCard =
     const moods = ["neutral with ", "friend with ", "best friend with "]
     relation = moods[heartLinkTier(strength)] & sim.players[listener].playerName
   result.lines = sim.bannerMessageLines(item.message,
-    DirectorCardWidth - DirectorCardPad * 2 - DirectorCardPortraitSize - 4)
+    (DirectorCardWidth - DirectorCardPad * 2 - DirectorCardPortraitSize - 8) div 2)
   result.relationLines = sim.bannerMessageLines(relation,
     DirectorCardWidth - DirectorCardPad * 2)
   let
     lineHeight = sim.textFont.height + 1
-    bodyHeight = max(DirectorCardPortraitSize, (result.lines.len + 1) * lineHeight + 2)
+    bodyHeight = max(DirectorCardPortraitSize, (result.lines.len + 1) * lineHeight * 2 + 4)
   result.height = max(96, bodyHeight + DirectorCardPad * 2 +
     6 + lineHeight * (1 + result.relationLines.len))
 
@@ -3631,11 +3640,41 @@ proc addDirectorFrame(
       max(0, scene.width - ViewerBorder * 2),
       max(0, scene.height - ViewerBorder * 2), rgba(0, 0, 0, 0))
     sim.viewerFrameKey = key
+  # Bitworld shares one integer scale across UI layers. An empty sizing
+  # layer keeps the transport at the same scale as the director chrome,
+  # including laptop windows where three UI pixels would crowd the map.
+  packet.addLayer(ViewerUiScaleLayerId, GlobalPanelLayerKind, UiLayerFlags)
+  packet.addViewport(ViewerUiScaleLayerId,
+    max(320, layout.canvasWidth * 2 div 3),
+    max(128, layout.canvasHeight * 2 div 3))
   packet.addLayer(DirectorFrameLayerId, SpriteLayerFullScreen, 0)
   packet.addViewport(DirectorFrameLayerId, layout.canvasWidth, layout.canvasHeight)
   packet.addRgbaSpriteCached(cache, DirectorFrameSpriteId, sim.viewerFrame,
     "viewer parchment frame " & key)
   packet.addObject(47_000, 0, 0, 0, DirectorFrameLayerId, DirectorFrameSpriteId)
+
+proc hasCachedSprite(cache: seq[SpriteCacheEntry], id, width, height: int): bool =
+  for entry in cache:
+    if entry.spriteId == id and entry.width == width and entry.height == height:
+      return true
+
+proc addViewerText(packet: var seq[uint8], sim: SimServer,
+    cache: var seq[SpriteCacheEntry], text: string, x, y: int,
+    slot: var int, zoom = 1, objectBase = 52_000) =
+  var dx = x
+  for ch in text:
+    let id = if zoom == 2: 9500 + ord(ch) else: ch.bannerGlyphSpriteId()
+    if zoom == 2 and not cache.hasCachedSprite(id,
+        max(1, sim.textFont.glyphAt(ch).width) * 2, sim.textFont.height * 2):
+      let source = sim.bannerGlyphSprite(ch)
+      var glyph = newRgbaSprite(source.width * 2, source.height * 2)
+      for gy in 0 ..< glyph.height:
+        for gx in 0 ..< glyph.width:
+          glyph.putPixel(gx, gy, source.rgbaSpriteAt(gx div 2, gy div 2))
+      packet.addRgbaSpriteCached(cache, id, glyph, "large UI glyph " & $ch)
+    packet.addObject(objectBase + slot, dx, y, 6, DirectorFrameLayerId, id)
+    inc slot
+    dx += sim.textFont.glyphAdvance(ch) * zoom
 
 proc addDirectorCard(
   packet: var seq[uint8], sim: SimServer,
@@ -3674,17 +3713,11 @@ proc addDirectorCard(
   packet.addObject(28_100, rect.x + pad, rect.y + pad - hop, 2,
     DirectorFrameLayerId, faceId)
   var glyphSlot = 0
-  template textRun(text: string, x, y: int) =
-    block:
-      var dx = x
-      for ch in text:
-        packet.addObject(48_000 + glyphSlot, dx, y, 3,
-          DirectorFrameLayerId, ch.bannerGlyphSpriteId())
-        inc glyphSlot
-        dx += sim.textFont.glyphAdvance(ch)
-  textRun(player.playerName, textX, rect.y + pad)
+  template textRun(text: string, x, y: int, zoom: int = 1) =
+    packet.addViewerText(sim, cache, text, x, y, glyphSlot, zoom, 48_000)
+  textRun(player.playerName, textX, rect.y + pad, 2)
   for i, line in card.lines:
-    textRun(line, textX, rect.y + pad + (i + 1) * lineHeight + 2)
+    textRun(line, textX, rect.y + pad + (i + 1) * lineHeight * 2 + 4, 2)
   let rule = solidRgbaSprite(DirectorCardWidth - pad * 2, 1, rgba(178, 138, 90, 255))
   packet.addRgbaSpriteCached(cache, 9302, rule, "director card rule")
   packet.addObject(28_101, rect.x + pad, ruleY, 2, DirectorFrameLayerId, 9302)
@@ -3694,12 +3727,112 @@ proc addDirectorCard(
   for i, line in card.relationLines:
     textRun(line, rect.x + pad, ruleY + 3 + (i + 1) * lineHeight)
 
+proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
+    state: PlayerViewerState, layout: ViewerLayout, card: DirectorCard,
+    replayControls: bool) =
+  state.viewerActions.setLen(0)
+  var slot = 0
+  template text(label: string, x, y: int, zoom: int = 1) =
+    packet.addViewerText(sim, state.spriteCache, label, x, y, slot, zoom)
+  template frame(id, objectId: int, rect: ViewerRect) =
+    if not state.spriteCache.hasCachedSprite(id, rect.width, rect.height):
+      packet.addRgbaSpriteCached(state.spriteCache, id,
+        sim.chatBanner.nineSliceSprite(rect.width, rect.height, PanelSliceInset),
+        "viewer panel " & $id & " " & $rect.width & "x" & $rect.height)
+    packet.addObject(objectId, rect.x, rect.y, 4, DirectorFrameLayerId, id)
+  template action(targetRect: ViewerRect, index: int) =
+    state.viewerActions.add(ViewerAction(rect: targetRect, conversationIndex: index))
+  template portrait(seat, x, y: int, size: int = 20) =
+    for player in sim.players:
+      if player.homeFlag != HomeMapIndexBase + seat: continue
+      let id = 10_000 + size * 10 + player.gnomeIndex
+      if not state.spriteCache.hasCachedSprite(id,size,size):
+        let source = sim.portraits[player.gnomeIndex mod sim.portraits.len]
+        var small = newRgbaSprite(size,size)
+        for sy in 0..<size:
+          for sx in 0..<size:
+            small.putPixel(sx,sy,source.rgbaSpriteAt(sx*source.width div size,sy*source.height div size))
+        packet.addRgbaSpriteCached(state.spriteCache,id,small,"list portrait " & player.playerName)
+      packet.addObject(52_000+slot,x,y,6,DirectorFrameLayerId,id)
+      inc slot
+      break
+  let
+    cw = layout.canvasWidth
+    ch = layout.canvasHeight
+    wide = layout.railWidth > 0
+    panelY = if wide: 18 else: 36
+    panelH = max(80, ch - panelY - (if wide: 4 else: 52))
+  if not wide:
+    let left = ViewerRect(x: 4,y:18,width:94,height:18)
+    let right = ViewerRect(x:cw-98,y:18,width:94,height:18)
+    frame(9853, 50_003, left)
+    frame(9854, 50_004, right)
+    text((if state.openPanel == 1: "x Leaderboard" else: "Leaderboard"), left.x+9,23)
+    text((if state.openPanel == 2: "x Conversations" else: "Conversations"),right.x+7,23)
+    action(left,-4)
+    action(right,-5)
+  if wide or state.openPanel == 1:
+    let panel = ViewerRect(x:2,y:panelY,width:ViewerRailWidth-4,height:panelH)
+    frame(9850,50_000,panel)
+    text("Leaderboard",panel.x+12,panel.y+12,2)
+    var order: seq[int]
+    for i in 0..<sim.players.len: order.add(i)
+    order.sort(proc(a,b:int):int = cmp(sim.players[b].score,sim.players[a].score))
+    let rowH = min(32, max(22,(panelH-40) div max(1,order.len)))
+    for rank, i in order:
+      let p = sim.players[i]
+      let y = panel.y+36+rank*rowH
+      if y+22 > panel.y+panelH-8: break
+      portrait(p.homeFlag-HomeMapIndexBase,panel.x+10,y)
+      text(p.playerName,panel.x+34,y,2)
+      text($p.score & " points",panel.x+34,y+15)
+  if wide or state.openPanel == 2:
+    let panel = ViewerRect(x:cw-ViewerRailWidth+2,y:panelY,width:ViewerRailWidth-4,height:panelH)
+    frame(9851,50_001,panel)
+    text("Conversations",panel.x+10,panel.y+12,2)
+    let count = max(1,(panel.height-60) div 90)
+    let pages = max(1,(sim.convQueue.len+count-1) div count)
+    state.conversationPage = clamp(state.conversationPage,0,pages-1)
+    if sim.convQueue.len == 0:
+      text((if replayControls: "No conversations" else: "Live game"),panel.x+12,panel.y+40)
+    for row in 0..<count:
+      let index = state.conversationPage*count+row
+      if index >= sim.convQueue.len: break
+      let span = sim.convQueue[index]
+      let r = ViewerRect(x:panel.x+7,y:panel.y+34+row*90,width:panel.width-14,height:86)
+      frame(9852,50_100+row,r)
+      let day = span.birthTick div (sim.dayTicks+ScoreScreenTicks)
+      let minutes = DayStartMinutes + min(sim.dayTicks,span.birthTick mod (sim.dayTicks+ScoreScreenTicks))*DayTotalMinutes div max(1,sim.dayTicks)
+      let time = align($(minutes div 60),2,'0') & ":" & align($(minutes mod 60),2,'0')
+      text(time & " Conversation",r.x+10,r.y+9)
+      var column = 0
+      for seat in span.members:
+        portrait(seat,r.x+10+(column mod 7)*15,r.y+23+(column div 7)*15,14)
+        inc column
+      text($span.spokenTurns & " turns" & (if day>0: " / day " & $(day+1) else: ""),r.x+10,r.y+56)
+      let playing = sim.convQueueCommitted and sim.directorCommitEncounter == span.id
+      text((if playing: "> Playing" else: "> Play"),r.x+10,r.y+68)
+      action(r,index)
+    if pages > 1:
+      let y = panel.y+panel.height-20
+      text("<",panel.x+14,y)
+      text($(state.conversationPage+1) & " / " & $pages,panel.x+44,y)
+      text(">",panel.x+panel.width-20,y)
+      action(ViewerRect(x:panel.x+6,y:y-5,width:28,height:20),-2)
+      action(ViewerRect(x:panel.x+panel.width-34,y:y-5,width:28,height:20),-3)
+  if card.playerIndex >= 0 and replayControls:
+    let close = ViewerRect(x:layout.card.x+layout.card.width-23,
+      y:layout.card.y+5,width:18,height:18)
+    text("x",close.x+5,close.y+3,2)
+    action(close,-1)
+
 proc addDirectorWorldView(
   packet: var seq[uint8],
   sim: SimServer,
   cache: var seq[SpriteCacheEntry],
   frameWidth, frameHeight: int,
-  replayControls, forestBackdrop: bool
+  replayControls, forestBackdrop: bool,
+  state: PlayerViewerState
 ) =
   ## World and room scenes share a framed crop and one on-air card.
   let
@@ -3719,7 +3852,7 @@ proc addDirectorWorldView(
       (if sim.directorSceneMap == MainMapIndex: sim.mainMap.width else: 0),
       (if sim.directorSceneMap == MainMapIndex: sim.mainMap.height else: 0),
       focusBlend = sim.directorFrameBlend,
-      overviewAspect = (if forestBackdrop: 1.5 else: 0.0))
+      overviewAspect = (if forestBackdrop: 1.5 else: 0.0), sidebars = true)
   if card.playerIndex >= 0:
     # The card overlays the full-screen scene. Prefer the usual right
     # position, then choose a clear edge when a gnome occupies it.
@@ -3738,12 +3871,13 @@ proc addDirectorWorldView(
     var best = overlapScore(layout.card)
     let
       bottom = layout.canvasHeight - (if replayControls: 54 else: 14) - card.height
-      right = layout.canvasWidth - DirectorCardWidth - 14
-    for position in [(14, max(106, layout.card.y)), (right, bottom),
-        (14, bottom), (right, 18)]:
+      right = layout.stage.x + layout.stage.width - DirectorCardWidth - 14
+    for position in [(layout.stage.x + 14, layout.card.y), (right, bottom),
+        (layout.stage.x + 14, bottom), (right, 18)]:
       let candidate = ViewerRect(x: position[0], y: position[1],
         width: DirectorCardWidth, height: card.height)
-      if candidate.y < 106 and candidate.x < 176: continue
+      if candidate.x < layout.stage.x or candidate.x + candidate.width >
+          layout.stage.x + layout.stage.width: continue
       if candidate.y < 0 or candidate.y + candidate.height > layout.canvasHeight: continue
       let score = overlapScore(candidate)
       if score < best:
@@ -3816,6 +3950,7 @@ proc addDirectorWorldView(
     OverhangZ, MapLayerId, topId)
   packet.addDirectorFrame(sim, cache, layout)
   packet.addDirectorCard(sim, cache, card, layout.card)
+  packet.addViewerChrome(sim, state, layout, card, replayControls)
   packet.addClockObjects(sim)
 
 proc replayCommandAt(layer, x, y: int): char =
@@ -4351,8 +4486,8 @@ proc buildGlobalPacket*(
 
   result.addClearObjects()
   if nextState.directorMode:
-    # The director cut ignores clicks and selection: the automated
-    # camera picks the shot for everyone watching.
+    # The director camera handles the scene; explicit replay navigation
+    # uses the chrome's own hit targets rather than player selection.
     nextState.pendingMapClick = false
     nextState.selectedPlayerIndex = -1
     result.addDirectorWorldView(
@@ -4361,9 +4496,9 @@ proc buildGlobalPacket*(
       nextState.frameWidth,
       nextState.frameHeight,
       replayControls,
-      nextState.forestBackdrop
+      nextState.forestBackdrop,
+      nextState
     )
-    result.addGlobalScorePanel(sim, nextState.spriteCache, -1)
     if replayControls:
       result.addReplayControls(
         sim,
@@ -5455,6 +5590,7 @@ proc buildConversationQueue*(sim: SimServer, finalTick: int) =
   ## stable order. An empty queue (a day with no conversations) keeps
   ## plain playback.
   sim.convQueue = sim.conversationTimeline.conversationSpans(finalTick)
+  sim.directorOverviewOnly = false
   sim.convQueueIndex = 0
   sim.convQueueLast = -1
   sim.convQueueCommitted = false
@@ -5475,6 +5611,7 @@ proc commitConversation(
   ## moves to its birth tick (the rewind, when the playhead already
   ## ran past it in a same-tick birth group); a scrub that lands
   ## mid-span commits in place instead and plays from there.
+  sim.directorOverviewOnly = false
   let item = sim.convQueue[index]
   sim.replayPresentationDirty = true
   sim.convQueueIndex = index
@@ -5498,7 +5635,7 @@ proc alignConversationQueue(
   ## commits there and plays it out from the scrubbed tick; otherwise
   ## the playhead fast-forwards to the next birth. One player, one
   ## behavior - scrubbing just moves the clock.
-  if sim.convQueue.len == 0:
+  if sim.convQueue.len == 0 or sim.directorOverviewOnly:
     return
   sim.convQueueCommitted = false
   sim.releaseDirectorCommit()
@@ -5565,7 +5702,18 @@ proc applyReplaySeek*(replay: var ReplayPlayer, sim: SimServer, tick: int) =
   ## the queue position from the new playhead.
   replay.playing = false
   replay.seekReplay(sim, clamp(tick, 0, replay.replayMaxTick()))
-  sim.alignConversationQueue(replay)
+  if not sim.directorOverviewOnly: sim.alignConversationQueue(replay)
+
+proc applyReplayConversation*(replay: var ReplayPlayer, sim: SimServer, index: int) =
+  ## Explicit list selection also distinguishes concurrent conversations.
+  if index == -1:
+    sim.directorOverviewOnly = true
+    sim.convQueueCommitted = false
+    sim.releaseDirectorCommit()
+    sim.replayPresentationDirty = true
+  elif index >= 0 and index < sim.convQueue.len:
+    sim.commitConversation(replay, index)
+    replay.playing = true
 
 proc applyReplayCommand*(
   replay: var ReplayPlayer,
@@ -5764,15 +5912,27 @@ proc drainReplayViewerInput(
   state: PlayerViewerState,
   maxTick: int,
   seekTicks: var seq[int],
-  commands: var seq[char]
+  commands: var seq[char],
+  conversations: var seq[int]
 ) =
   ## Collects pending replay seeks and commands from one viewer.
-  ## Score-panel clicks are handled first in the websocket handler;
-  ## the panel, scrubber, and transport live on distinct layers, so
-  ## a panel click never reaches the scrubber or transport checks.
+  ## Chrome, scrubber and transport have separate protocol layers.
+  ## Hit rectangles come from the current rendered frame, including paging.
   state.replaySeekTick = -1
   if state.clickPending:
     state.clickPending = false
+    if state.mousePressLayer == DirectorFrameLayerId:
+      for action in state.viewerActions:
+        let r = action.rect
+        if state.mousePressX >= r.x and state.mousePressX < r.x + r.width and
+            state.mousePressY >= r.y and state.mousePressY < r.y + r.height:
+          case action.conversationIndex
+          of -2: state.conversationPage = max(0, state.conversationPage - 1)
+          of -3: inc state.conversationPage
+          of -4: state.openPanel = (if state.openPanel == 1: 0 else: 1)
+          of -5: state.openPanel = (if state.openPanel == 2: 0 else: 2)
+          else: conversations.add(action.conversationIndex)
+          break
     let seekTick = replayScrubTickAt(
       state.mousePressLayer,
       state.mousePressX,
@@ -5862,7 +6022,7 @@ proc advanceReplayPresentation*(
     # Queue-mode bookkeeping: commit at births, release at
     # deaths, rewind through same-tick birth groups, resume
     # from the furthest tick shown.
-    sim.stepConversationQueue(replay)
+    if not sim.directorOverviewOnly: sim.stepConversationQueue(replay)
     # With a director watching, a conversation on screen slows
     # 1X playback to show pacing: recorded lines land about five
     # seconds apart. Other speeds respect the transport.
@@ -5882,7 +6042,7 @@ proc advanceReplayPresentation*(
     # briskly to the next birth; committed playback never runs
     # past its item's death tick. The clamps land the playhead
     # exactly on each boundary.
-    if sim.convQueue.len > 0:
+    if sim.convQueue.len > 0 and not sim.directorOverviewOnly:
       if not sim.convQueueCommitted and sim.directorDinnerTtl <= 0 and
           replay.replaySpeedIndex() == DefaultSpeedIndex:
         ticksThisFrame = QueueFastForwardTicks
@@ -5894,7 +6054,7 @@ proc advanceReplayPresentation*(
           sim.convQueue[sim.convQueueIndex].birthTick - sim.tickCount))
     # A camera glide is a held breath: at show speed the replay
     # pauses until the shot settles, so cuts never swallow lines.
-    if directorWatching and sim.directorTweenLeft > 0 and
+    if directorWatching and not sim.directorOverviewOnly and sim.directorTweenLeft > 0 and
         replay.replaySpeedIndex() == DefaultSpeedIndex:
       ticksThisFrame = 0
 
@@ -5928,12 +6088,15 @@ proc replayViewerFrame*(
   var
     seekTicks: seq[int]
     commands: seq[char]
-  state.drainReplayViewerInput(replay.replayMaxTick(), seekTicks, commands)
+    conversations: seq[int]
+  state.drainReplayViewerInput(replay.replayMaxTick(), seekTicks, commands, conversations)
   if replayLoaded:
     for seekTick in seekTicks:
       replay.applyReplaySeek(sim, seekTick)
     for command in commands:
       replay.applyReplayCommand(sim, command)
+    for index in conversations:
+      replay.applyReplayConversation(sim, index)
     sim.advanceReplayPresentation(replay, state.directorMode)
   else:
     sim.updateDirectorCamera()
@@ -6203,6 +6366,8 @@ when not defined(emscripten):
 })();</script>
 """
 
+  const ViewerFeedbackScript = staticRead("../data/viewer-feedback.js")
+
   proc respondDirectorPage(request: Request) =
     ## Serves the shared global client as a director page: the stock
     ## viewer body with the fit snippet appended, so the automated
@@ -6211,7 +6376,8 @@ when not defined(emscripten):
       bitworldClient.GlobalClientRoute,
       bitworldClient.GlobalClientRoute
     )
-    page = page.replace("</body>", DirectorFitSnippet & "</body>")
+    page = page.replace("</body>", DirectorFitSnippet & "<script>" &
+      ViewerFeedbackScript & "</script></body>")
     var headers: HttpHeaders
     headers["Content-Type"] = "text/html"
     headers["Cache-Control"] = "no-cache"
@@ -7109,6 +7275,7 @@ when not defined(emscripten):
         viewerIsReplay: seq[bool] = @[]
         seekTicks: seq[int] = @[]
         commands: seq[char] = @[]
+        conversations: seq[int] = @[]
         restartPending = false
         viewerJoined = false
 
@@ -7154,7 +7321,7 @@ when not defined(emscripten):
             state.drainReplayViewerInput(
               replay.replayMaxTick(),
               seekTicks,
-              commands
+              commands, conversations
             )
           for websocket, state in appState.globalViewers.pairs:
             viewerSockets.add(websocket)
@@ -7163,7 +7330,7 @@ when not defined(emscripten):
             state.drainReplayViewerInput(
               replay.replayMaxTick(),
               seekTicks,
-              commands
+              commands, conversations
             )
 
       if replayLoaded:
@@ -7178,6 +7345,8 @@ when not defined(emscripten):
           replay.applyReplaySeek(sim, seekTick)
         for command in commands:
           replay.applyReplayCommand(sim, command)
+        for index in conversations:
+          replay.applyReplayConversation(sim, index)
       var directorWatching = false
       for state in viewerStates:
         if state.directorMode:

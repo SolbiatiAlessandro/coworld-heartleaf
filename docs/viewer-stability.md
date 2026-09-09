@@ -5,8 +5,8 @@ resources, replay format, and game rules.
 
 - Light parchment (`#d5b072`) fills the surround. The map uses the existing
   pixel-art wooden and leafy border. The frame masks overflow and expands with the camera during zoom.
-- The full-village overview fills the window height with controls overlaid. Conversation shots
-  fill the window with a wider camera crop, without stretching the map.
+- The full-village overview fills the window height, between the two side panels. Conversation shots
+  fill that central stage with a wider camera crop, without stretching the map.
   Crops stay inside the village art at map edges and in ultrawide windows.
   In narrow portrait windows, the overview fits the width to keep the whole
   village visible. Playback controls never reduce its size.
@@ -29,6 +29,53 @@ resources, replay format, and game rules.
   the earlier PRs.
 - Native and static replays share queue, camera and dialogue stepping at 24 Hz.
   The static build uses the director and unsigned 32-bit visual noise arithmetic.
+
+## Conversation navigation and readability
+
+- The leaderboard sits to the left of the map, sorted by points. Recorded
+  conversations sit to the right. Both panels use the existing parchment,
+  wooden and leafy pixel artwork. The map keeps its full available height.
+- Each conversation card shows its recorded game time (24-hour clock), all
+  participant portraits, the number of spoken turns, and Play. Selecting one
+  seeks to its start and commits the camera to that encounter, including when
+  other conversations started at the same tick. Longer lists have page arrows.
+  Narrow windows expose each panel through a compact toggle.
+- Dialogue and speaker text use integer 2× Tiny5 glyphs; the 54×54 portrait and
+  score/connection footer remain. Glyphs, portraits and empty panel frames are
+  cached separately; stationary frames send no new sprite textures.
+- The pixel X in the card's upper-right corner returns to the village overview.
+  Overview stays selected during playback and scrubbing until a conversation
+  is explicitly selected. Closing retains play/pause state and also works
+  during dinner. Overview mode uses ordinary replay pacing.
+- Playback buttons get a local, stepped press/pop effect on pointer-down,
+  without a network round trip. Reduced-motion users get a brief highlight.
+  This acknowledges the click; the authoritative play/pause icon still follows
+  replay state. Both native HTML and WASM include the same feedback script.
+- The transport and new panels share an integer UI scale, so laptop windows
+  do not enlarge the transport across the sidebars.
+
+Checks: `nim r tests/viewer_navigation.nim` exercises real sprite-client input
+through the shared replay entrypoint: concurrent selection, X while paused,
+continued overview playback, scrubbing, dinner exit, pagination and narrow
+panel toggles. `node tests/viewer_feedback.cjs` checks transport hit geometry
+and synchronous animation dispatch. These do not measure browser input-to-paint
+latency; direct browser verification remains unavailable while the Mac is locked.
+
+With these panels enabled, the native WebSocket replay acknowledged 12/12
+play/pause trials in 24–52 ms after loading and reached tick 4,500 at 16X in
+16.3 seconds. These are server-response measurements, not browser paint timing.
+
+The following are current replay-derived protocol renders:
+
+![Full-height overview with both side panels](viewer-stability/navigation-overview.png)
+
+![Selecting the second simultaneous conversation](viewer-stability/navigation-conversation.png)
+
+![Village overview after closing the conversation](viewer-stability/navigation-closed.png)
+
+![Laptop layout with matching transport scale](viewer-stability/navigation-laptop.png)
+
+![Dinner room and larger dialogue](viewer-stability/navigation-dinner.png)
 
 ## Playback and portrait follow-up
 
@@ -77,6 +124,8 @@ response, not browser input-to-paint latency. Initial asset/control loading took
 about 1.8 seconds. The final native server streamed the whole recording to tick
 4,500 at 16X in 16.4 seconds, with no hash mismatch. Sixty paused presentation frames produced pixel-identical
 images. Native, unit, viewer, route, integration and static build checks pass.
+
+Earlier stability iteration (before the side panels):
 
 ![Recorded village overview](viewer-stability/playback-overview.png)
 

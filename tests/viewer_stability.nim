@@ -125,7 +125,9 @@ for msg in parseSpritePacket(second):
     doAssert not msg.sprite.label.startsWith("banner glyph")
     doAssert not msg.sprite.label.startsWith("portrait")
     doAssert not msg.sprite.label.startsWith("forest surround")
-    doAssert not msg.sprite.label.startsWith("director empty card")
+    # A newly wrapped line may resize the reusable empty frame.
+    if msg.sprite.label.startsWith("director empty card"):
+      doAssert msg.sprite.width == ViewerCardWidth
     doAssert not msg.sprite.label.startsWith("director portrait")
     doAssert not msg.sprite.label.startsWith("viewer parchment frame")
   elif msg.kind == spkObject:
@@ -137,7 +139,8 @@ for msg in parseSpritePacket(second):
       doAssert msg.objectDef.layer == 7
     if label.startsWith("director portrait"): inc portraits
     if msg.objectDef.id >= 48_000 and msg.objectDef.id < 49_000:
-      cardText.add(char(msg.objectDef.spriteId - 8720 + 32))
+      let id = msg.objectDef.spriteId
+      cardText.add(char(if id >= 9500: id - 9500 else: id - 8720 + 32))
 doAssert glyphs > 20 and backgrounds == 1 and portraits == 1
 doAssert "Points: 27" in cardText and "Connections: 9" in cardText
 doAssert "A different sentence" in cardText

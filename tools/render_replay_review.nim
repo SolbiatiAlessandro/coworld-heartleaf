@@ -56,3 +56,12 @@ replay.applyReplaySeek(sim,4200)
 sim.advanceReplayPresentation(replay)
 capture("08-night-room.png")
 echo "Saved replay-derived protocol frames to ",output
+
+# New conversation browser: select a concurrent pair, then return to overview.
+replay.applyReplayConversation(sim,1)
+for _ in 0..<220: sim.advanceReplayPresentation(replay)
+capture("09-selected-conversation.png")
+capture("10-dialogue-laptop.png",1440,900)
+replay.applyReplayConversation(sim,-1)
+for _ in 0..<60: sim.advanceReplayPresentation(replay)
+capture("11-closed-overview.png")
