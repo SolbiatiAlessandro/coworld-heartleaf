@@ -24,8 +24,8 @@ proc frameLayout*(
   worldWidth = 0, worldHeight = 0,
   focusBlend = 1.0, overviewAspect = 0.0, sidebars = false
 ): ViewerLayout =
-  ## The village fits the stage beside the optional leaderboard. Conversation shots
-  ## fill the entire window, hide the rail and overlay the conversation cards.
+  ## Center the village on the window, keeping clear of the optional leaderboard.
+  ## Conversation shots fill the window, hide the rail and overlay the cards.
   let
     fw = float(if frameWidth > 0: frameWidth else: 1280)
     fh = float(if frameHeight > 0: frameHeight else: 720)
@@ -66,7 +66,7 @@ proc frameLayout*(
       let wideH = int(round(float(worldHeight) * wideScale)) + ViewerBorder * 2
       result.scene.width = int(round(float(wideW) + float(sw - wideW) * blend))
       result.scene.height = int(round(float(wideH) + float(ch - wideH) * blend))
-      let wideX = overviewRail + (overviewStage - wideW) div 2
+      let wideX = max(overviewRail, (cw - wideW) div 2)
       result.scene.x = int(round(float(wideX) * (1.0 - blend)))
       result.scene.y = (ch - result.scene.height) div 2
       boundsWidth = wideWidth + (float(worldWidth) - wideWidth) * blend
@@ -113,7 +113,7 @@ proc frameLayout*(
     sceneWidth = int(round(cropWidth * scale)) + ViewerBorder * 2
     sceneHeight = int(round(cropHeight * scale)) + ViewerBorder * 2
   result.scene = ViewerRect(
-    x: rail + (availableWidth - sceneWidth) div 2,
+    x: max(rail, (cw - sceneWidth) div 2),
     y: (availableHeight - sceneHeight) div 2,
     width: sceneWidth, height: sceneHeight)
   result.width = max(1, int(ceil(float(cw) / scale)))

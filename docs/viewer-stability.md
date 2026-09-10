@@ -6,7 +6,9 @@ resources, replay format, and game rules.
 - The supplied pixel-brick tile fills the surround. Circular room interiors retain
   light parchment (`#d5b072`). The map uses the existing
   pixel-art wooden and leafy border. The frame masks overflow and expands with the camera during zoom.
-- The full-village overview fills the window height, beside the left leaderboard. Conversation shots
+- The full-village overview fills the window height and is centered on the whole
+  viewer, with the leaderboard on the left. Cramped widths keep the map clear
+  of the leaderboard. Conversation shots
   hide the leaderboard and fill the entire window, without stretching the map.
   Crops stay inside the village art at map edges and in ultrawide windows.
   In narrow portrait windows, the overview fits the width to keep the whole
@@ -76,8 +78,9 @@ additional click animation. The input-order and playback-rate fixes below
 repair the existing controls without redesigning them.
 
 `data/viewer-bricks.png` is the tile supplied by Alessandro on September 9.
-It is reused unchanged, sampled at half size and tiled behind the framed game
-and parchment leaderboard. The title still uses the existing Heartleaf logo.
+The source asset is unchanged. It is sampled at one-eighth size and tiled behind
+the framed game and parchment leaderboard: each brick is one-quarter of its
+previous displayed width and height. The title still uses the existing Heartleaf logo.
 
 ### Button diagnosis and repairs
 

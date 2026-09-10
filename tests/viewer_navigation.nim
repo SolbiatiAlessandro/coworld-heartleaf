@@ -25,11 +25,18 @@ for msg in parseSpritePacket(first):
   if msg.kind == spkObject:
     doAssert msg.objectDef.id != 50_001, "removed right panel must not render"
 doAssert glyphHeights == @[6], "use the original unscaled font glyphs"
-for size in [(1280,720),(1440,900),(1920,1080)]:
+for size in [(1280,720),(1440,900),(1920,1080),(1468,798),(1366,1024)]:
   let layout = frameLayout(0,0,748,941,size[0],size[1],true,true,sidebars=true)
   doAssert layout.railWidth == ViewerRailWidth
   doAssert layout.scene.height == layout.canvasHeight
   doAssert layout.stage.width == layout.canvasWidth - ViewerRailWidth
+  let centeredX = (layout.canvasWidth - layout.scene.width) div 2
+  if centeredX >= ViewerRailWidth:
+    let rightMargin = layout.canvasWidth - layout.scene.x - layout.scene.width
+    doAssert abs(layout.scene.x-rightMargin) <= 1, "equal margins around the village"
+  let start = frameLayout(0,0,748,941,size[0],size[1],true,true,
+    conversation=true,worldWidth=748,worldHeight=941,focusBlend=0.001,sidebars=true)
+  doAssert start.scene == layout.scene, "the zoom must start at the centered overview"
   doAssert layout.scene.x >= ViewerRailWidth
   doAssert layout.scene.x + layout.scene.width <= layout.canvasWidth
   let zoom = frameLayout(200,200,250,314,size[0],size[1],true,true,100,

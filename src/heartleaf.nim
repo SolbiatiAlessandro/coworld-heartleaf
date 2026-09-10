@@ -3674,10 +3674,12 @@ proc addDirectorFrame(
   if sim.viewerFrameKey != key:
     if sim.viewerBricks.width == 0:
       let tile = readImage(dataDir() / "viewer-bricks.png")
-      sim.viewerBricks = newRgbaSprite(tile.width div 2, tile.height div 2)
+      # Four times smaller than the previous half-size tile; retain hard pixels.
+      const BrickSample = 8
+      sim.viewerBricks = newRgbaSprite(tile.width div BrickSample, tile.height div BrickSample)
       for y in 0..<sim.viewerBricks.height:
         for x in 0..<sim.viewerBricks.width:
-          sim.viewerBricks.putPixel(x,y,tile[x*2,y*2])
+          sim.viewerBricks.putPixel(x,y,tile[x*BrickSample,y*BrickSample])
     sim.viewerFrame = newRgbaSprite(layout.canvasWidth, layout.canvasHeight)
     for y in 0..<layout.canvasHeight:
       for x in 0..<layout.canvasWidth:

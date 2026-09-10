@@ -30,7 +30,9 @@ capture("01-overview.png")
 capture("02-laptop.png",1440,900)
 capture("03-narrow.png",390,844,true)
 capture("05-short-window.png",1280,600)
+capture("06-reported-window.png",1468,798)
+capture("07-cramped-window.png",1366,1024)
 replay.applyReplayConversation(sim,1)
 for _ in 0..<220: sim.advanceReplayPresentation(replay)
 capture("04-conversation.png")
-echo "Saved five wordmark review frames to ",output
+echo "Saved wordmark and overview review frames to ",output
