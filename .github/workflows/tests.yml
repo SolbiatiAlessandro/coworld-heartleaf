@@ -35,7 +35,9 @@ jobs:
         run: nim c -d:release players/soul_player/soul_player.nim
 
       - name: Unit tests
-        run: nim r tests/tests.nim
+        run: |
+          nim r tests/tests.nim
+          nim r tests/connections.nim
 
       - name: Viewer and route regressions
         run: |
@@ -44,6 +46,8 @@ jobs:
           nim r tests/viewer_controls.nim
           nim r tests/routes.nim
           nim r tools/record_viewer_scenario.nim out/viewer-scenario.replay
+          nim r tools/record_connection_scenario.nim out/connections-scenario.replay
+          nim r tests/connections_viewer.nim out/connections-scenario.replay
 
       - name: Integration tests
         run: HEARTLEAF_SERVER=out/heartleaf nim r tests/integration.nim

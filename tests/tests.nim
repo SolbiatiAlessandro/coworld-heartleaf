@@ -1270,7 +1270,11 @@ block:
     doAssert sim.playerScore(1) == 0, "bob was home"
     now += 0.05
     frame = brains.advance(observations(), now)
-    doAssert frame.paused == false, "the score screen keeps stepping"
+    doAssert frame.paused, "bedtime holds the score screen for interviews"
+    answerPending()
+    now += 0.05
+    frame = brains.advance(observations(), now)
+    doAssert not frame.paused, "even unavailable rankings release the score screen"
     for line in brains.villagers[0].history:
       doAssert not line.content.startsWith("(Curfew:"),
         "nobody hears a curfew penalty"

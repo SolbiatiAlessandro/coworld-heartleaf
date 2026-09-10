@@ -5,7 +5,7 @@ import
   bitworld/resources, bitworld/sprites,
   heartleaf/common, heartleaf/protocol, heartleaf/souls,
   heartleaf/observation, heartleaf/navigation, heartleaf/encounters,
-  heartleaf/viewer_layout, heartleaf/pixel_emotes,
+  heartleaf/viewer_layout, heartleaf/pixel_emotes, heartleaf/connections,
   replays
 
 when not defined(emscripten):
@@ -267,16 +267,12 @@ const
   InsetChatZ = 31_601
   OutlinePad = 1
   TrailObjectBase = 24_000
-  HeartSpriteBase = 9200        ## emote sprites: 3 tiers x 4 fade stages,
+  HeartSpriteBase = 9200        ## emote sprites: 4 emotions x 4 fade stages,
                                 ## clear of the chat-banner glyph ids
   HeartObjectBase = 27_000
   HeartLinkZ = 30_010           ## emotes float above heads and name tags
-  HeartLinkMaxDistance = 190    ## px; emotes only show when the pair is near
-  HeartEmotePeriod = 72         ## ticks per emote cycle (3s at 24 ticks/s)
   HeartEmoteLife = 44           ## ticks one emote lives while rising
-  HeartEmoteStagger = 16        ## ticks between emotes of the same cycle
   HeartEmoteRise = 26           ## px an emote rises over its life
-  HeartEmoteCount = [1, 2, 3]   ## emotes per cycle, by connection tier
   ConversationRingSpriteBase = 8900
   ConversationRingObjectBase = 26_000
   ConversationRingZ = 55
@@ -415,6 +411,9 @@ type
   DirectorCard = object
     playerIndex: int
     lines: seq[string]
+    connectionStrength: float
+    connectionLabel: string
+    hasConnection: bool
     headerLines: array[2, seq[string]]
     headerWidths: array[2, int]
     width, height, portraitSize, frameY, headerX, headerY, headerHeight, textX, textY: int
@@ -499,15 +498,13 @@ type
     trails: seq[seq[TrailPoint]]  ## viewer-only history, never hashed
     conversationCircles*: seq[tuple[x, y, radius: int]]
       ## Viewer-only sparkle rings. Never hashed.
+    connectionTimeline*: ConnectionTimeline
     conversationTimeline: ConversationTimeline
       ## Replay chat-mode objects from game.log. Empty in live play.
     conversationAnchors: Table[int, ConversationAnchor]
       ## Frozen ring positions keyed by encounter id. Viewer-only.
-    heartLinks*: seq[tuple[a, b, links: int]]
-      ## Connection strengths from the heart ledger (live) or the
-      ## conversation records (replay). Viewer-only, never hashed.
-    heartEmoteBases: array[3, RgbaSprite]
-      ## The emote sprites: neutral, smile, star-eyes, by tier.
+    heartEmoteBases: array[4, RgbaSprite]
+      ## Happy, very happy, sad and very sad pixel faces.
     heartEmoteFaded: Table[int, RgbaSprite]
       ## Alpha-faded emote variants, cached by tier * 4 + fade.
     directorCamX, directorCamY, directorCamW, directorCamH: float
@@ -633,6 +630,10 @@ type
     cardLayoutKey: string
     cardRowHeight: int
     cardSlots: array[HouseCount, int] # One-based slots, retained for this shot.
+    connectionSelection*: int # seat + 1, zero means no inspector
+    connectionReflectionPage: int
+    connectionNextPage: ViewerRect
+    connectionButtons: seq[tuple[seat:int, rect:ViewerRect]]
 
   RunConfig = ref object
     address: string
@@ -1051,7 +1052,7 @@ proc initSimServer*(seed = DefaultSeed, dayTicks = DayTicks): SimServer =
     raise newException(HeartleafError, "Gnome sheet has no gnomes.")
   result.textFont = readPixelFont(tiny5Path)
   result.chatBanner = loadChatBanner(dataRoot / "chatbanner.aseprite")
-  for tier in 0 ..< 3:
+  for tier in 0 ..< 4:
     result.heartEmoteBases[tier] = pixelEmote(tier)
   result.portraits = loadPortraits(dataRoot)
   result.conversationAnchors = initTable[int, ConversationAnchor]()
@@ -2680,6 +2681,7 @@ proc attachConversationTimeline*(
   sim.conversationTimeline = ConversationTimeline()
   sim.conversationAnchors.clear()
   let recorded = data.conversationLogText()
+  sim.connectionTimeline = parseConnections(recorded)
   if recorded.len > 0:
     # Older replays share the record channel with circle rows and may
     # hold no conversation events at all - only records that actually
@@ -2711,20 +2713,14 @@ proc heartNoise(a, b, c: int): float =
   h = h xor (h shr 16)
   float(int(h and 1023) - 512) / 512.0
 
-proc heartLinkTier(links: int): int =
-  ## Maps one pair's conversation history to an emote tier: a neutral
-  ## face for a fresh acquaintance, a smile for a friend, star-eyes
-  ## for a strong bond.
-  clamp((links - 1) div 4, 0, 2)
-
 proc heartEmoteSprite(sim: SimServer, tier, fade: int): RgbaSprite =
   ## Dissolve whole pixel blocks. Bitworld overwrites within a layer:
   ## partial alpha would erase the map underneath and fade to black.
-  let key = clamp(tier, 0, 2) * 4 + clamp(fade, 0, 3)
+  let key = clamp(tier, 0, 3) * 4 + clamp(fade, 0, 3)
   if key in sim.heartEmoteFaded:
     return sim.heartEmoteFaded[key]
   let
-    base = sim.heartEmoteBases[clamp(tier, 0, 2)]
+    base = sim.heartEmoteBases[clamp(tier, 0, 3)]
     visible = [4, 4, 4, 2][clamp(fade, 0, 3)]
   var sprite = newRgbaSprite(base.width, base.height)
   for y in 0 ..< base.height:
@@ -2747,71 +2743,29 @@ proc addHeartEmoteObjects(
   viewportWidth,
   viewportHeight: int
 ) =
-  ## Appends Sims-style emote emojis: each gnome standing near a
-  ## connected partner sends its own emoji drifting up from its head
-  ## and fading. The connection tier picks the face - a plain smile for
-  ## a fresh acquaintance up to heart-eyes for the strongest bonds -
-  ## and how many rise per cycle. In replays the strengths come from a
-  ## pure fold of the conversation records inside the replay file, so
-  ## the animation is identical everywhere.
-  let pairs =
-    if sim.conversationTimeline.events.len > 0:
-      sim.conversationTimeline.heartLinksAt(sim.tickCount)
-    else:
-      sim.heartLinks
-  if pairs.len == 0:
-    return
-  var byHouse: array[HouseCount, int]
-  for h in 0 ..< HouseCount:
-    byHouse[h] = -1
-  for i, player in sim.players:
-    let house = player.homeFlag - HomeMapIndexBase
-    if house >= 0 and house < HouseCount:
-      byHouse[house] = i
-  var bestTier: array[HouseCount, int]
-  for h in 0 ..< HouseCount:
-    bestTier[h] = -1
-  for pair in pairs:
-    if pair.links <= 0:
-      continue
-    if pair.a < 0 or pair.a >= HouseCount or
-        pair.b < 0 or pair.b >= HouseCount:
-      continue
-    if byHouse[pair.a] < 0 or byHouse[pair.b] < 0:
-      continue
-    let
-      a = sim.players[byHouse[pair.a]]
-      b = sim.players[byHouse[pair.b]]
-    if a.mapIndex != mapIndex or b.mapIndex != mapIndex:
-      continue
-    let
-      dxi = b.x - a.x
-      dyi = b.y - a.y
-    if dxi * dxi + dyi * dyi > HeartLinkMaxDistance * HeartLinkMaxDistance:
-      continue
-    let tier = heartLinkTier(pair.links)
-    bestTier[pair.a] = max(bestTier[pair.a], tier)
-    bestTier[pair.b] = max(bestTier[pair.b], tier)
-  for house in 0 ..< HouseCount:
-    if bestTier[house] < 0 or byHouse[house] < 0:
-      continue
-    let
-      player = sim.players[byHouse[house]]
-      tier = bestTier[house]
-    for k in 0 ..< HeartEmoteCount[tier]:
-      let
-        age = (sim.tickCount + house * 13 + k * HeartEmoteStagger) mod
-          HeartEmotePeriod
-      if age >= HeartEmoteLife:
-        continue
+  ## Only recorded, deliberately sent reactions appear, never proximity loops.
+  var reactions: Table[int,ConnectionEvent]
+  for event in sim.connectionTimeline.events:
+    if event.tick > sim.tickCount: break
+    if event.kind == "connection-emoji" and sim.tickCount-event.tick < HeartEmoteLife:
+      reactions[event.seat] = event
+  for house,event in reactions:
+    var playerIndex = -1
+    for i,p in sim.players:
+      if p.homeFlag == HomeMapIndexBase+house: playerIndex = i
+    if playerIndex < 0: continue
+    let player = sim.players[playerIndex]
+    if player.mapIndex != mapIndex: continue
+    let tier = ord(event.emotion)
+    for k in 0 ..< 1:
+      let age = sim.tickCount-event.tick
       let
         progress = age.float / HeartEmoteLife.float
         fade = clamp(int(progress * 4.0), 0, 3)
-        cycle = (sim.tickCount + house * 13 + k * HeartEmoteStagger) div
-          HeartEmotePeriod
+        cycle = event.tick
         sway = heartNoise(house, k, cycle) * 5.0
         sprite = sim.heartEmoteSprite(tier, fade)
-        spriteId = HeartSpriteBase + clamp(tier, 0, 2) * 4 + fade
+        spriteId = HeartSpriteBase + clamp(tier, 0, 3) * 4 + fade
         ex = player.x + GnomeSpriteSize div 2 - sprite.width div 2 +
           int(sway)
         tagHeight = sim.textFont.height + NamePadY * 2
@@ -3604,8 +3558,6 @@ proc directorCard(sim: SimServer, item: ChatFeedItem, playerIndex, width: int): 
   let
     player = sim.players[playerIndex]
     seat = player.homeFlag - HomeMapIndexBase
-    heartPairs = if sim.conversationTimeline.events.len > 0:
-      sim.conversationTimeline.heartLinksAt(sim.tickCount) else: sim.heartLinks
   var listener = -1
   for hearer in item.hearers:
     for i, candidate in sim.players:
@@ -3616,14 +3568,11 @@ proc directorCard(sim: SimServer, item: ChatFeedItem, playerIndex, width: int): 
   var relation = "Speaking"
   if listener >= 0:
     let otherSeat = sim.players[listener].homeFlag - HomeMapIndexBase
-    var strength = 0
-    for pair in heartPairs:
-      if (pair.a == seat and pair.b == otherSeat) or
-          (pair.b == seat and pair.a == otherSeat):
-        strength = pair.links
-        break
-    const moods = ["Neutral towards ", "Friendly towards ", "Best friends with "]
-    relation = moods[heartLinkTier(strength)] & sim.players[listener].playerName
+    let bonds = sim.connectionTimeline.bondsAt(sim.tickCount)
+    result.hasConnection = bonds.len > 0
+    result.connectionStrength = bonds.strength(seat,otherSeat)
+    result.connectionLabel = sim.players[listener].playerName & ":"
+    relation = if result.hasConnection: "" else: "Not recorded"
   result.width = width
   result.portraitSize = DirectorCardPortraitSize
   result.frameY = 14
@@ -3779,6 +3728,16 @@ proc addDirectorCard(
     packet.addRgbaSpriteCached(cache, headerId, header, "director name and relationship")
   packet.addObject(28_200 + card.playerIndex, rect.x + card.headerX, rect.y + card.headerY, 3,
     DirectorFrameLayerId, headerId)
+  if card.hasConnection:
+    let id = 12_000 + int(round(card.connectionStrength * 100))
+    packet.addRgbaSpriteCached(cache,id,pixelHearts(card.connectionStrength),"connection hearts " & $card.connectionStrength)
+    let start = rect.x + card.headerX + card.headerWidths[0] + 8
+    var labelSlot = 0
+    packet.addViewerText(sim,cache,card.connectionLabel,start,rect.y+card.headerY+6,
+      labelSlot,objectBase=64_000+card.playerIndex*100,dark=true)
+    packet.addObject(64_900+card.playerIndex,
+      start+sim.viewerTextWidth(card.connectionLabel,ViewerBodyHeight)+6,
+      rect.y+card.headerY+5,6,DirectorFrameLayerId,id)
   var glyphSlot = 0
   template textRun(text: string, x, y: int) =
     packet.addViewerText(sim, cache, text, x, y, glyphSlot, ViewerBodyHeight, 54_000 + card.playerIndex * 1_000, dark = true)
@@ -3795,6 +3754,8 @@ proc addDirectorCard(
 proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
     state: PlayerViewerState, layout: ViewerLayout) =
   state.leaderboardButton = ViewerRect()
+  state.connectionButtons.setLen(0)
+  state.connectionNextPage = ViewerRect()
   var slot = 0
   template text(label: string, x, y: int, height: int = ViewerBodyHeight) =
     packet.addViewerText(sim, state.spriteCache, label, x, y, slot, height)
@@ -4002,6 +3963,8 @@ proc addDirectorWorldView(
     packet.addViewerChrome(sim, state, layout)
   else:
     state.leaderboardButton = ViewerRect()
+    state.connectionButtons.setLen(0)
+    state.connectionNextPage = ViewerRect()
   packet.addClockObjects(sim)
 
 proc replayCommandAt(layer, x, y: int): char =
@@ -5946,6 +5909,16 @@ proc applyReplayViewerMessage(state: PlayerViewerState, data: string, playback =
         state.mouseDown = item.down
         if item.down:
           if state.mouseLayer == DirectorFrameLayerId:
+            for button in state.connectionButtons:
+              let r = button.rect
+              if state.mouseX >= r.x and state.mouseX < r.x+r.width and
+                  state.mouseY >= r.y and state.mouseY < r.y+r.height:
+                state.connectionSelection = if state.connectionSelection == button.seat+1: 0 else: button.seat+1
+                state.connectionReflectionPage = 0
+            let paging = state.connectionNextPage
+            if state.mouseX >= paging.x and state.mouseX < paging.x+paging.width and
+                state.mouseY >= paging.y and state.mouseY < paging.y+paging.height:
+              inc state.connectionReflectionPage
             let r = state.leaderboardButton
             if state.mouseX >= r.x and state.mouseX < r.x+r.width and
                 state.mouseY >= r.y and state.mouseY < r.y+r.height:
@@ -6719,6 +6692,7 @@ when not defined(emscripten):
 
     proc applyUnpausedFrame(frame: BrainFrame) =
       ## Applies one unpaused brain frame and steps the sim.
+      sim.connectionTimeline = brains.connectionTimeline
       var stepInputs = newSeq[InputState](sim.players.len)
       for item in frame.outputs:
         let playerIndex = seatPlayers[item.houseIndex]
@@ -6821,7 +6795,7 @@ when not defined(emscripten):
         if seatPlayers[seat] >= 0:
           observations[seat] = sim.observe(seatPlayers[seat])
       var frame = brains.advance(observations, epochTime())
-      sim.heartLinks = brains.heartPairs()
+      sim.connectionTimeline = brains.connectionTimeline
       sim.conversationCircles = brains.syncConversationCircles(
         sim.outdoorConversationFeet(seatPlayers),
         sim.outdoorConversationFeet(seatPlayers, stillOnly = true)
