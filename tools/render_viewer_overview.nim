@@ -1,5 +1,5 @@
-## Review the original Heartleaf wordmark in the actual replay layout.
-## nim r tools/render_viewer_brand.nim OUTPUT_DIR
+## Review the compact leaderboard and supplied texture in the actual replay layout.
+## nim r tools/render_viewer_overview.nim OUTPUT_DIR
 import std/[importutils, os], heartleaf, replays
 import viewer_review_render
 privateAccess(SimServer)
@@ -35,4 +35,4 @@ capture("07-cramped-window.png",1366,1024)
 replay.applyReplayConversation(sim,1)
 for _ in 0..<220: sim.advanceReplayPresentation(replay)
 capture("04-conversation.png")
-echo "Saved wordmark and overview review frames to ",output
+echo "Saved leaderboard and overview review frames to ",output

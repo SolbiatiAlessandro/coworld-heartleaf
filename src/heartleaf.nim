@@ -201,7 +201,7 @@ const
   ViewerBodyHeight = 6
   ViewerNameHeight = 6
   DirectorCardWidth = ViewerCardWidth
-  DirectorCardPortraitSize = 81
+  DirectorCardPortraitSize = 54
   DirectorFrameSpriteId = 9300
   DirectorCardFrameSpriteId = 9800
   DirectorCardHeaderSpriteId = 9900
@@ -471,8 +471,7 @@ type
   SimServer* = ref object
     mainMap: WorldMap
     viewerBrown: RgbaSprite
-    viewerTitle: RgbaSprite
-    viewerBricks: RgbaSprite
+    viewerGround: RgbaSprite
     viewerFrame: RgbaSprite
     viewerFrameKey: string
     homeMaps: array[HouseCount, WorldMap]
@@ -3672,19 +3671,18 @@ proc addDirectorFrame(
     scene = layout.scene
     key = $layout.canvasWidth & ":" & $layout.canvasHeight & ":" & $scene
   if sim.viewerFrameKey != key:
-    if sim.viewerBricks.width == 0:
-      let tile = readImage(dataDir() / "viewer-bricks.png")
-      # Four times smaller than the previous half-size tile; retain hard pixels.
-      const BrickSample = 8
-      sim.viewerBricks = newRgbaSprite(tile.width div BrickSample, tile.height div BrickSample)
-      for y in 0..<sim.viewerBricks.height:
-        for x in 0..<sim.viewerBricks.width:
-          sim.viewerBricks.putPixel(x,y,tile[x*BrickSample,y*BrickSample])
+    if sim.viewerGround.width == 0:
+      sim.viewerGround = imageRgbaSprite(readImage(dataDir() / "viewer-ground.png"))
+    # Reflect the supplied ground texture at each edge so adjacent tiles share
+    # their boundary pixels, without stretching the texture or introducing seams.
+    proc tileCoord(value, size: int): int =
+      let phase = value mod (size * 2)
+      if phase < size: phase else: size * 2 - 1 - phase
     sim.viewerFrame = newRgbaSprite(layout.canvasWidth, layout.canvasHeight)
     for y in 0..<layout.canvasHeight:
       for x in 0..<layout.canvasWidth:
-        sim.viewerFrame.putPixel(x,y,sim.viewerBricks.rgbaSpriteAt(
-          x mod sim.viewerBricks.width,y mod sim.viewerBricks.height))
+        sim.viewerFrame.putPixel(x,y,sim.viewerGround.rgbaSpriteAt(
+          tileCoord(x,sim.viewerGround.width),tileCoord(y,sim.viewerGround.height)))
     let border = sim.chatBanner.nineSliceSprite(
       scene.width, scene.height, 16)
     sim.viewerFrame.blitRgbaSprite(border, scene.x, scene.y)
@@ -3750,13 +3748,10 @@ proc addDirectorCard(
   packet.addObject(28_000 + card.playerIndex, rect.x, rect.y + card.frameY, 1,
     DirectorFrameLayerId, frameId)
   let source = sim.portraits[player.gnomeIndex mod sim.portraits.len]
-  var face = newRgbaSprite(card.portraitSize, card.portraitSize)
-  for y in 0 ..< face.height:
-    for x in 0 ..< face.width:
-      face.putPixel(x, y, source.rgbaSpriteAt(
-        x * source.width div face.width, y * source.height div face.height))
   let faceId = DirectorCardFaceSpriteBase + player.gnomeIndex
-  packet.addRgbaSpriteCached(cache, faceId, face,
+  # The original 54px artwork is sent unchanged. The previous 81px resize
+  # alternated one- and two-pixel widths, distorting eyes, hats and beard details.
+  packet.addRgbaSpriteCached(cache, faceId, source,
     "director portrait " & player.playerName)
   packet.addObject(28_100 + card.playerIndex, rect.x + 7, rect.y, 2,
     DirectorFrameLayerId, faceId)
@@ -3793,30 +3788,6 @@ proc addDirectorCard(
     textRun(line, rect.x + (if i < 7: card.textX else: 14),
       rect.y + card.textY + i * lineHeight)
 
-proc ensureViewerTitle(sim: SimServer) =
-  ## Reuse the game's existing pixel-art wooden wordmark and heart-leaf ornament.
-  ## The upper cottage illustration is omitted to keep nine leaderboard rows.
-  if sim.viewerTitle.width > 0: return
-  let source = readAsepriteImage(dataDir() / "logo.aseprite")
-  const
-    CropX = 14
-    CropY = 129
-    CropWidth = 192
-    CropHeight = 81
-    Width = ViewerRailWidth - 12
-  let height = CropHeight * Width div CropWidth
-  sim.viewerTitle = newRgbaSprite(Width, height)
-  for y in 0 ..< height:
-    for x in 0 ..< Width:
-      let
-        sx = CropX + x * CropWidth div Width
-        sy = CropY + y * CropHeight div height
-        # Follow the sign's bowed upper edge, excluding the cottage lawn
-        # above it instead of leaving a hard rectangular strip of scenery.
-        edge = 130 + int(6.0 * sin(PI * float(sx - CropX) / float(CropWidth)))
-      if sy >= edge:
-        sim.viewerTitle.putPixel(x, y, source[sx, sy])
-
 proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
     state: PlayerViewerState, layout: ViewerLayout) =
   state.leaderboardButton = ViewerRect()
@@ -3829,16 +3800,19 @@ proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
         sim.chatBanner.nineSliceSprite(rect.width, rect.height, PanelSliceInset),
         "viewer panel " & $id & " " & $rect.width & "x" & $rect.height)
     packet.addObject(objectId, rect.x, rect.y, 4, DirectorFrameLayerId, id)
-  template portrait(seat, x, y: int, size: int = 20) =
+  const FaceSize = 27
+  template portrait(seat, x, y: int) =
     for player in sim.players:
       if player.homeFlag != HomeMapIndexBase + seat: continue
-      let id = 10_000 + size * 10 + player.gnomeIndex
-      if not state.spriteCache.hasCachedSprite(id,size,size):
+      let id = 10_240 + player.gnomeIndex
+      if not state.spriteCache.hasCachedSprite(id,FaceSize,FaceSize):
         let source = sim.portraits[player.gnomeIndex mod sim.portraits.len]
-        var small = newRgbaSprite(size,size)
-        for sy in 0..<size:
-          for sx in 0..<size:
-            small.putPixel(sx,sy,source.rgbaSpriteAt(sx*source.width div size,sy*source.height div size))
+        # Exactly halve the 54px portrait. A uniform two-pixel sampling step
+        # keeps its silhouette proportional; 54 -> 20 distorted the features.
+        var small = newRgbaSprite(FaceSize,FaceSize)
+        for sy in 0..<FaceSize:
+          for sx in 0..<FaceSize:
+            small.putPixel(sx,sy,source.rgbaSpriteAt(sx*2,sy*2))
         packet.addRgbaSpriteCached(state.spriteCache,id,small,"list portrait " & player.playerName)
       packet.addObject(52_000+slot,x,y,6,DirectorFrameLayerId,id)
       inc slot
@@ -3847,36 +3821,30 @@ proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
     ch = layout.canvasHeight
     wide = layout.railWidth > 0
     panelY = if wide: 4 else: 36
-    panelH = max(80, ch - panelY - (if wide: 4 else: 52))
+    rowH = FaceSize + 1
+    # The wide rail sits beside the transport, so it can use the full height.
+    rowCount = min(sim.players.len, max(0,(ch-panelY-20-(if wide: 4 else: 52)) div rowH))
   if not wide:
     let left = ViewerRect(x:4,y:18,width:94,height:18)
     frame(9853,50_003,left)
     text("Leaderboard",left.x+9,23)
     state.leaderboardButton = left
-  if wide or state.openPanel == 1:
-    let panel = ViewerRect(x:2,y:panelY,width:ViewerRailWidth-4,height:panelH)
+  if (wide or state.openPanel == 1) and rowCount > 0:
+    let panel = ViewerRect(x:2,y:panelY,width:ViewerRailWidth-4,height:20+rowCount*rowH)
     frame(9850,50_000,panel)
-    sim.ensureViewerTitle()
-    packet.addRgbaSpriteCached(state.spriteCache, 9855, sim.viewerTitle,
-      "Heartleaf leafy wordmark")
-    packet.addObject(50_005, panel.x + (panel.width - sim.viewerTitle.width) div 2,
-      panel.y + 12, 5, DirectorFrameLayerId, 9855)
-    let headingY = panel.y + 12 + sim.viewerTitle.height + 8
-    if panelH >= 320:
-      text("Leaderboard", panel.x + (panel.width - sim.viewerTextWidth("Leaderboard",ViewerNameHeight)) div 2,
-        headingY, ViewerNameHeight)
-    let rowsTop = headingY - panel.y + (if panelH >= 320: 18 else: 0)
     var order: seq[int]
     for i in 0..<sim.players.len: order.add(i)
     order.sort(proc(a,b:int):int = cmp(sim.players[b].score,sim.players[a].score))
-    let rowH = min(32, max(20,(panelH-rowsTop-8) div max(1,order.len)))
     for rank, i in order:
+      if rank >= rowCount: break
       let p = sim.players[i]
-      let y = panel.y+rowsTop+rank*rowH
-      if y + min(22,rowH) > panel.y+panelH-8: break
-      portrait(p.homeFlag-HomeMapIndexBase,panel.x+10,y,min(20,rowH))
-      text(p.playerName,panel.x+34,y,ViewerNameHeight)
-      text($p.score & " points",panel.x+34,y+12)
+      let y = panel.y+10+rank*rowH
+      text(p.score.globalPanelScoreText(),panel.x+10,y+9)
+      portrait(p.homeFlag-HomeMapIndexBase,panel.x+30,y)
+      let displayName = if p.username == p.playerName: p.playerName else: p.attributedDisplayName()
+      let label = sim.viewerMessageLines(displayName,panel.width-69,ViewerNameHeight)
+      for line in 0..<min(2,label.len):
+        text(label[line],panel.x+59,y+9-(if label.len>1: 4 else: 0)+line*9,ViewerNameHeight)
 
 proc addDirectorWorldView(
   packet: var seq[uint8],

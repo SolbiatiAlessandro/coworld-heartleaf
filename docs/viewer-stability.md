@@ -1,273 +1,145 @@
-# Viewer stability candidate
+# Viewer stability and current review gallery
 
-This change preserves the hand-drawn village, walk masks, house locations,
-resources, replay format, and game rules.
+PR #50 repairs replay controls and director presentation while preserving the
+hand-drawn village, walk masks, house locations, replay format, and game rules.
 
-- The supplied pixel-brick tile fills the surround. Circular room interiors retain
-  light parchment (`#d5b072`). The map uses the existing
-  pixel-art wooden and leafy border. The frame masks overflow and expands with the camera during zoom.
-- The full-village overview fills the window height and is centered on the whole
-  viewer, with the leaderboard on the left. Cramped widths keep the map clear
-  of the leaderboard. Conversation shots
-  hide the leaderboard and fill the entire window, without stretching the map.
-  Crops stay inside the village art at map edges and in ultrawide windows.
-  In narrow portrait windows, the overview fits the width to keep the whole
-  village visible. Playback controls never reduce its size.
-- The settled director shot shows one compact card per gnome who has spoken.
-  Their latest aired line updates that card; queued future lines remain hidden.
-  A large portrait rises above the left edge, dialogue sits beside it and flows
-  below for longer lines, and a light wooden bottom strip contains only the
-  name and relationship. Points stay in the leaderboard; connections are absent.
-- Cards use clear edges of the full-screen world and keep the central conversation
-  visible where space permits. They never overlap each other or the transport.
-  Small or crowded windows show the most recent speakers that fit. Six cards fit
-  the checked 1280×720 group scene. Overview and outdoor glides have no cards.
-- This restores separate gnome cards from [director PR #35](https://github.com/Metta-AI/coworld-heartleaf/pull/35),
-  using the user's revised parchment/portrait/bottom-strip arrangement. Only lines
-  aired in the current shot persist, and switching conversations clears them.
-  The old two-portrait banner is absent. Frames, portraits, identity strips and
-  letter sprites are cached separately; changing a line does not resend a full card.
-- A host plus one guest qualifies for a room shot. Eligible rooms rotate, with
-  their own camera coordinates and a transparent circular exterior.
-- The three emotion tiers use 16×16 pixel faces, half the previous width and
-  height, anchored above names. Their placement
-  clears nearby gnomes too. Whole pixel blocks dissolve during the fade:
-  partial alpha in the pinned client's map layer could erase the map underneath.
-- Live viewers report their actual size, including after reconnect. Saved
-  replays retain pause, seek and speed controls; live had no pause/rewind before
-  the earlier PRs.
-- Native and static replays share queue, camera and dialogue stepping at 24 Hz.
-  The static build uses the director and unsigned 32-bit visual noise arithmetic.
+## Shipping behavior
 
-## Leafy Heartleaf title
+- The village overview fills the window height and is centered, with a compact
+  leaderboard on the left. Narrow windows fit the entire village width and
+  offer a leaderboard toggle. Conversation shots hide the leaderboard and fill
+  the window with the world. The wooden, leafy map frame follows the camera.
+- The leaderboard has score, portrait, and player/gnome name on each row. Its
+  parchment ends after the final entry; it has no Heartleaf logo or heading.
+  Nine gnomes fit the checked 1280×600 desktop window.
+- The default surround uses Alessandro's September 10 texture, stored unchanged
+  in `data/viewer-ground.png`. Adjacent tiles mirror at their shared edge, so
+  the source pixels meet without an abrupt repeat boundary. The brick asset
+  and the viewer's logo crop/resizing code have been removed.
+- Settled conversation shots show one compact card per gnome who has spoken,
+  updated with their latest aired line. Portraits protrude above the parchment;
+  the bottom strip holds only name and relationship. Cards avoid each other
+  and the transport. Small windows show the most recent speakers that fit.
+- Dialogue portraits retain all 54×54 source pixels. Leaderboard icons use a
+  uniform 2:1 reduction to 27×27 instead of the previous irregular 54→20
+  sampling. The former 54→81 dialogue enlargement also alternated pixel widths.
+  Original Tiny5 glyphs and spacing remain unchanged. Frames, portraits, and
+  letters are cached separately; changing dialogue does not resend a whole card.
+- The director visits host-plus-guest rooms and rotates eligible parties. Room
+  corners remain transparent through night shading. Small 16×16 pixel emotes
+  clear the gnomes and their names.
 
-The left panel now carries a large Heartleaf wooden sign with cream lettering,
-curling vines and a green heart-leaf ornament. This reuses `data/logo.aseprite`;
-the original asset is unchanged. The wordmark is cropped away from the upper
-cottage illustration, follows the sign's bowed edge, and uses nearest-pixel
-sampling. It is loaded once and sent as a cached sprite.
+## Playback repairs
 
-The second art iteration removes the strip of scenery above the lettering and
-adds space around the sign. Header and row spacing keep all nine gnomes visible
-in the checked desktop, laptop, narrow portrait and 1280×600 layouts.
+Pause freezes simulation, camera, dialogue timing, and room rotation. Resume
+advances the presentation immediately. Camera travel and its frame share a
+two-second eased transition, with dialogue held until the shot settles.
 
-Regenerate these protocol renders with:
-`nim r tools/render_viewer_brand.nim out/title-review`.
+One ordered input queue retains rapid clicks and play/seek ordering. Previous
+conversation selects the preceding conversation; play at the end restarts.
+Every playback speed multiplies the same director pace. The `1/4` and `1/2`
+buttons mean quarter and half speed. Button art is unchanged, with no added
+press animation. Native and static viewers share the same presentation logic.
+Live viewers report their real viewport dimensions; replay transport remains
+for saved games, as before the earlier PRs.
 
-![Leafy Heartleaf leaderboard title](viewer-stability/simple-01-overview.png)
+## Current images — September 10
 
-[Conversation view](viewer-stability/simple-04-conversation.png) ·
-[Laptop](viewer-stability/simple-02-laptop.png) ·
-[Narrow panel](viewer-stability/simple-03-narrow.png) ·
-[Short window](viewer-stability/simple-05-short-window.png)
+These are **offline renders of actual game drawing packets**, using the pinned
+Bitworld client's composition rules. They are not browser screenshots. The Mac
+was locked during this review, so fresh browser/GPU and click-to-paint checks
+remain pending. All older screenshot iterations were removed from this gallery.
 
-## Current layout, text and controls
+### Overview: new texture, no logo, compact nine-player leaderboard
 
-The viewer has a left Heartleaf leaderboard and the game beside it. The right
-conversation list, card X and browser press/pop animation were removed after
-review. The ordinary transport remains. Narrow windows can toggle the leaderboard.
+![Current overview at 1440×900](viewer-stability/01-overview.png)
 
-Dialogue, gnome names, scores and relation text use the original Tiny5 glyphs
-and spacing directly. No glyph is enlarged or resampled. Card letters use darker
-ink, retaining the original pixel shapes. The existing portrait art is displayed
-at 81×81 in compact 188-pixel-wide cards, protruding above the frame. The earlier
-7/8-pixel and doubled text experiments were withdrawn after review.
+### Two-player leaderboard: frame ends after its rows
 
-The play/pause artwork and normal toggle match `origin/master`. There is no
-additional click animation. The input-order and playback-rate fixes below
-repair the existing controls without redesigning them.
+![Host and guest with proportional portrait icons](viewer-stability/02-compact-leaderboard.png)
 
-`data/viewer-bricks.png` is the tile supplied by Alessandro on September 9.
-The source asset is unchanged. It is sampled at one-eighth size and tiled behind
-the framed game and parchment leaderboard: each brick is one-quarter of its
-previous displayed width and height. The title still uses the existing Heartleaf logo.
+### Conversation: unresampled portrait and original lettering
 
-### Button diagnosis and repairs
+![Full-window conversation](viewer-stability/03-conversation.png)
 
-- The old state stored one pending click. Two next-conversation clicks before
-  a frame advanced only once. Input now preserves every click and its order.
-- Seeks and commands previously drained into separate lists, which could
-  reorder play/seek combinations. One input queue preserves arrival order.
-- The director slowed only 1× playback. In a settled conversation, 100 frames
-  advanced 20 ticks at 1×, 50 at ½×, and 25 at ¼×. All speeds now multiply the
-  same director pace: the corresponding results are 20, 10, and 5 ticks.
-- Previous selected the same committed conversation repeatedly. It now selects
-  the preceding conversation. Play at the recording end restarts playback.
-- Camera cuts hold the first conversation tick at every speed, including the
-  first frame of a cut. Pause still freezes the whole presentation.
+### Multiple speakers: one card per gnome
 
-The speed buttons `1/4` and `1/2` mean quarter and half speed, not 1.4× or 1.2×.
-The director still uses slower conversation pacing and faster travel between
-conversations. The selected speed multiplies those respective base rates.
+![Two speakers](viewer-stability/04-two-speakers.png)
 
-`tests/viewer_controls.nim` sends actual sprite-client packets through the shared
-native/static entrypoint. It checks rapid next clicks, previous, double toggles,
-play/seek ordering, all eight speeds, 64 pause/speed combinations, end/restart,
-cut boundaries and a complete 4,500-tick replay with matching hashes.
-The full local unit, viewer, route and integration suites pass, as do native
-and pinned WASM builds. A real native WebSocket run acknowledged all 12
-play/pause trials in 24–51 ms (median 29 ms), and reached tick 4,500 in 65.5
-seconds at 16×. These measure server response, not browser display latency.
+![Six speakers with clear transport](viewer-stability/05-six-speakers.png)
 
-Current images below are offline renders of actual replay packets, not browser
-screenshots. Browser input-to-paint timing remains unverified while the Mac is locked.
+### Circular rooms, including night
 
-![Village and left Heartleaf leaderboard](viewer-stability/simple-02-laptop.png)
+![Day room](viewer-stability/06-room-day.png)
 
-![Original font in a full-screen conversation](viewer-stability/simple-04-conversation.png)
+![Night room](viewer-stability/07-room-night.png)
 
-The following two controlled scenes exercise multiple speakers with the same renderer:
+### Smaller windows
 
-![Two compact gnome cards](viewer-stability/compact-two-cards.png)
+![All nine gnomes at 1280×600](viewer-stability/08-short-window.png)
 
-![Six speakers with separate cards](viewer-stability/compact-six-cards.png)
+![Narrow window with leaderboard open](viewer-stability/09-narrow-window.png)
 
-![Half-speed playback after a button sequence](viewer-stability/controls-04-half-speed.png)
-
-![Dinner room during the complete replay](viewer-stability/controls-07-dinner.png)
-
-[Short window](viewer-stability/simple-05-short-window.png) ·
-[Narrow leaderboard](viewer-stability/simple-03-narrow.png)
-
-## Playback and portrait repairs
-
-- Pause now freezes the camera, room rotation, speaker hops and dialogue read
-  time as well as the simulation. Resume advances the camera on its first frame.
-  A paused seek or next-conversation command refreshes its destination once.
-- The visible map frame and camera now share the two-second eased transition.
-  Entering a conversation no longer forces an immediate 1.67–2.29× zoom to fill
-  a wider rectangle. World-edge bounds include integer viewport rounding.
-- Transport targets grow from 12×7 to 14×20 logical pixels, including the gaps
-  between glyphs. Speed targets also grow; neither overlaps the scrubber.
-- Compact per-gnome cards use the original lettering, an enlarged protruding
-  portrait and a light wooden name/relationship strip across the bottom edge.
-  A gnome's later turn replaces their previous line, preserving the other speakers.
-  There are no points or connections in the cards. Nine-seat coverage checks that
-  every gnome's object IDs remain inside the protocol's 16-bit range.
-
-At every speed the director holds simulation ticks during a camera glide so
-recorded dialogue begins after settling. Play resumes that glide immediately.
-
-## Reproduce the local test game
-
-The included [test replay](viewer-stability/local-viewer-scenario.replay) was
-recorded from a new nine-gnome simulation with seed 7301: three concurrent
-outdoor conversations, two host-plus-guest dinner rooms, and 4,500 ticks.
-Decisions and dialogue are authored for this test; this is not a model-generated
-playthrough. Gnomes use the ordinary navigation executor and doors. Every tick
-hash is recorded and checked. No archived inputs or edited game states are used.
+The overview, single-card, and window-size captures use the included replay.
+The two-player, multiple-card, and room captures use controlled review scenes.
+Regenerate both sets from the repo root:
 
 ```sh
+nim r tools/render_viewer_overview.nim out/review-overview
+nim r tools/render_viewer_review.nim out/review-controlled
+```
+
+## Test replay and validation
+
+The included [test replay](viewer-stability/local-viewer-scenario.replay) has
+nine gnomes, seed 7301, three concurrent outdoor conversations, two dinner
+rooms, and 4,500 ticks. Decisions and dialogue are authored for this test; this
+is not a model-generated playthrough. Gnomes use normal navigation and doors,
+and replay hashes are checked.
+
+```sh
+nim c -d:release src/heartleaf.nim
 nim r tools/record_viewer_scenario.nim out/viewer-scenario.replay
 out/heartleaf --port:8082 --load-replay:out/viewer-scenario.replay
 # Open http://localhost:8082/client/global
 ```
 
-The generator also checks the full shared director playback: 18,172 frames,
-all three concurrent conversations, no stall, and matching hashes at completion.
-CI regenerates this scenario. Offline captures can be reproduced with:
+Install dependencies from `nimby.lock` in the parent workspace first. Native
+validation covers the game and soul-player builds, unit tests, viewer stability,
+leaderboard layout, controls, routes, integration, and regeneration/playback of
+the complete scenario. New assertions check content-fit panel height, all nine
+short-window rows, exact dialogue portrait pixels, uniform thumbnail sampling,
+and absent logo sprites. Existing controls coverage includes 64 pause/speed
+combinations, rapid next clicks, seek ordering, and end/restart behavior.
 
 ```sh
-nim r tools/render_replay_review.nim out/viewer-scenario.replay out/replay-review
-```
-
-Native WebSocket trials acknowledged 36/36 play/pause clicks after loading:
-9–71 ms in the overview and 7–49 ms in a conversation. These measure server
-response, not browser input-to-paint latency. Initial asset/control loading took
-about 1.8 seconds. The final native server streamed the whole recording to tick
-4,500 at 16X in 16.4 seconds, with no hash mismatch. Sixty paused presentation frames produced pixel-identical
-images. Native, unit, viewer, route, integration and static build checks pass.
-
-Earlier stability iteration (before the side panels):
-
-![Recorded village overview](viewer-stability/playback-overview.png)
-
-![Paused midway through the camera glide](viewer-stability/playback-paused.png)
-
-![Full-resolution portrait in the recorded conversation](viewer-stability/playback-portrait.png)
-
-![Recorded host-plus-guest dinner](viewer-stability/playback-dinner.png)
-
-![Recorded night room, with transparent exterior](viewer-stability/playback-night.png)
-
-[Animated offline zoom sequence](viewer-stability/zoom-playback.webp) ·
-[Portrait-window conversation](viewer-stability/playback-narrow.png)
-
-## Two surrounds
-
-Open `/client/global` for bricks, or append `?background=forest` for the forest
-comparison. Static URLs accept the same parameter alongside `replay`.
-
-The optional forest has no extra houses and uses the map's day/night tint.
-Its generated joins still need art review. The brick surround is the current default.
-
-`data/forest.png` and `data/forest-frame.png` were generated on September 8 using
-OpenAI ImageGen with the existing `data/backdrop.png` and `docs/heartleafMap.png`
-as references. Original village and home source art is unchanged. Forest
-textures load only when selected.
-
-## Validation
-
-Baseline: master `ad3c138`, dependencies from `nimby.lock`.
-Native Nim 2.2.10; static Nim 2.2.4 and Emscripten 4.0.15.
-
-```sh
-nim c src/heartleaf.nim
+nim check src/heartleaf.nim
+nim c -d:release players/soul_player/soul_player.nim
 nim r tests/tests.nim
 nim r tests/viewer_stability.nim
 nim r tests/viewer_navigation.nim
 nim r tests/viewer_controls.nim
 nim r tests/routes.nim
 HEARTLEAF_SERVER=out/heartleaf nim r tests/integration.nim
-nim c -d:emscripten wasm/replay_viewer.nim
-nim r tools/render_viewer_review.nim out/viewer-review
+tools/build_replay_viewer.sh "$PWD/out/static-replay-viewer"
 ```
 
-Regressions cover party eligibility, room transparency through night tints,
-unchanged gameplay hashes, portrait/landscape layout, per-gnome latest-line
-retention, no future lines, conversation isolation, nine-seat ID safety,
-name/relationship bottom strips, component reuse across changed text, absence of the old
-banner, no card in wide shots or camera travel, every emoji animation phase
-clearing both gnome bodies, opaque/dissolved icon pixels, and conversation
-playback with pause/seek.
+The September 10 local run used native Nim 2.2.12 and the pinned static Nim
+2.2.4/Emscripten toolchain; GitHub CI uses native Nim 2.2.10. See the PR checks
+for CI results on its current head. All local suites and both builds passed.
+A fresh native WebSocket run acknowledged all 12 play/pause trials in 24–51 ms
+(median 28 ms) and streamed the complete 4,500-tick recording. These are server
+response timings, not browser display latency.
 
-The archived two-day recording
-[116ed90d-3374-4bc7-8152-0e79dfe8eee0](https://softmax-public.s3.amazonaws.com/replays/116ed90d-3374-4bc7-8152-0e79dfe8eee0.replay)
-and a synthetic conversation fixture reached tick 9120 with matching hashes.
-Before this visual refinement, the static fixture also completed in Chrome
-without captured browser errors. CI includes the native tests and static bundle.
+## Out of scope and remaining limits
 
-## Earlier controlled visual evidence (before the current layout)
+No new connection mechanics, gnome dialogue generation, horizontal village
+redraw, right-hand conversation list, card close button, text enlargement,
+production deployment, or PR merge is included.
 
-All images above and below are **offline renders of actual sprite-protocol packets**, using a small
-review tool that mirrors the pinned client's layer composition. The additional images below use a
-controlled two-gnome scene. They are not browser screenshots. The Mac was locked
-during this refinement, so a fresh browser/GPU check remains pending.
-
-The reviewed frames cover wide view, full-screen outdoor zoom in progress and settled,
-map-edge card placement, portrait view, and circular rooms at zoom start,
-settled, and night. The complete circular room clears the transport. No black
-bars or opaque exterior room rectangle appeared in those renders. Intended
-night shading inside the room is preserved.
-
-![Village overview filling the window height](viewer-stability/rendered-wide.png)
-
-![Portrait overview preserving the whole village](viewer-stability/rendered-wide-portrait.png)
-
-![Full-screen conversation and smaller pixel emojis](viewer-stability/rendered-director-card.png)
-
-![Card moves aside for a conversation at the village edge](viewer-stability/rendered-card-edge.png)
-
-![Circular room in landscape](viewer-stability/rendered-room-day.png)
-
-![Circular room in portrait](viewer-stability/rendered-room-portrait.png)
-
-![Circular room at night](viewer-stability/rendered-room-night.png)
-
-[Portrait conversation and closer emoji view](viewer-stability/rendered-director-portrait.png)
-
-## Review limits
-
-Andre's original freeze recording is unavailable; completing other fixtures
-does not diagnose or close that failure. Forest joins require art review.
-Fresh browser/GPU validation and hosted testing remain pending. No PR merge or production game deployment has been performed.
+Andre's original replay-freeze recording is unavailable. Other complete replay
+runs do not diagnose that specific failure. The optional `?background=forest`
+comparison remains available, but its generated joins still need art review.
+The forest assets were generated on September 8 using OpenAI ImageGen with the
+existing village art as reference; the original village and home art is unchanged.
+Fresh browser/GPU validation and hosted testing remain pending.

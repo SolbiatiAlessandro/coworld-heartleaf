@@ -113,12 +113,20 @@ for msg in parseSpritePacket(first):
   if msg.kind == spkSprite:
     labels[msg.sprite.id] = msg.sprite.label
     if msg.sprite.label.startsWith("director portrait"):
-      doAssert msg.sprite.width == 81 and msg.sprite.height == 81,
-        "portrait must match the protruding portrait in the compact card"
+      doAssert msg.sprite.width == 54 and msg.sprite.height == 54,
+        "dialogue portraits must keep the source art's native pixel grid"
     if msg.sprite.label.startsWith("director glyph"):
       doAssert msg.sprite.height == 6, "card lettering keeps the original font"
   if msg.kind == spkSprite:
     doAssert not msg.sprite.label.startsWith("director card 0")
+privateAccess(typeof(next.spriteCache[0]))
+var checkedPortraits = 0
+for entry in next.spriteCache:
+  if entry.spriteId in 9150..9158:
+    doAssert entry.pixels == sim.portraits[entry.spriteId-9150].pixels,
+      "dialogue portraits must be sent without any resampling"
+    inc checkedPortraits
+doAssert checkedPortraits > 0
 sim.chatFeed[0].message = "A different sentence updates the letters without resending the empty card."
 var next2: PlayerViewerState
 let second = sim.buildGlobalPacket(next, next2, replayControls=true)
