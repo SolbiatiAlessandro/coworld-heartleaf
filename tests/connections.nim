@@ -1,7 +1,7 @@
 ## Relationship semantics, real brain request lifecycle, and replay folding.
 import std/[json, os, sequtils, strutils, tables]
 import heartleaf, replays
-import heartleaf/[brains, bedrock_client, common, connections, decisions,
+import heartleaf/[brains, bedrock_client, common, connections, decisions, encounters,
   observation, protocol, souls, villager]
 
 proc interview(seat,day:int, order:seq[int]): Interview =
@@ -167,3 +167,39 @@ block:
     if previous.len > 0: putEnv("HEARTLEAF_INTERVIEW_TIMEOUT_SECONDS",previous)
     else: delEnv("HEARTLEAF_INTERVIEW_TIMEOUT_SECONDS")
 echo "Slow local interview window: delayed valid replies and bounded failure passed."
+
+# Morning must remove yesterday's book membership before startNewDay
+# resets local ids. Old groups must not claim a new conversation's speaker.
+block:
+  let sim = initSimServer(42)
+  let minds = newBrains(sim.navigationFor(),sim.worldLayoutFor(),newScriptedBedrockClient(),42)
+  let soul = parseSoul("#!test-model\nYou are {name}.")
+  var obs:Table[int,Observation]
+  for seat in 0..2:
+    discard sim.addPlayer(seat.playerNameForHouse(),seat)
+    minds.attachSoul(seat,soul)
+    obs[seat] = sim.observe(seat)
+    obs[seat].dayNumber = 2
+  discard minds.joinOrStartTalk(minds.villagers[0],"Anton")
+  discard minds.joinOrStartTalk(minds.villagers[0],"Yura")
+  doAssert minds.book.encounters.len==1
+  discard minds.advance(obs,1)
+  doAssert minds.book.encounters.len==0
+  for v in minds.villagers.values: doAssert v.encounterId==0
+  let newGroup = minds.joinOrStartTalk(minds.villagers[1],"Yura")
+  doAssert newGroup.id==2 and newGroup.members.len==2
+  doAssert minds.villagers[1].encounterId==minds.villagers[2].encounterId
+
+block:
+  let timeline = parseConversationTimeline("""
+{"kind":"convo-enter","tick":10,"day":1,"seat":0,"text":"conversation id=1 members=Ivan,Anton turn=1"}
+{"kind":"connection-action","tick":100,"day":2}
+{"kind":"convo-tick","tick":110,"day":2,"seat":0,"text":"conversation id=1 silent=false"}
+{"kind":"convo-enter","tick":120,"day":2,"seat":1,"text":"conversation id=2 members=Anton,Yura turn=2"}
+""")
+  doAssert timeline.encounterGroupsAt(99).len==1
+  doAssert timeline.encounterGroupsAt(110).len==0
+  doAssert timeline.encounterGroupsAt(120)[0].id==2
+  let spans = timeline.conversationSpans(200)
+  doAssert spans.len==2 and spans[0].deathTick==100 and spans[1].birthTick==120
+  echo "Overnight encounter cleanup and old-replay boundaries passed"

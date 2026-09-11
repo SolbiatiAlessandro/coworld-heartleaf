@@ -5420,6 +5420,16 @@ proc chatFeedNextIndex(sim: SimServer, fromIndex: int): int =
     inc i
   -1
 
+proc replayDialoguePending(sim: SimServer): bool =
+  ## A queued or still-readable line in the current shot. Empty time
+  ## between model replies must not inherit the dialogue slow motion.
+  let index = sim.chatFeedIndex
+  if index < 0 or index >= sim.chatFeed.len or
+      not sim.chatFeedScopeMatches(index):
+    return sim.chatFeedNextIndex(max(index, 0)) >= 0
+  sim.replayPresentationTime - sim.chatFeedShownAt < ChatFeedShowSeconds or
+    sim.chatFeedNextIndex(index + 1) >= 0
+
 proc advanceChatFeed*(sim: SimServer, now = epochTime()) =
   ## Advances the delay-chat cursor by wall clock, not sim ticks or
   ## render frames. Each queued line stays up ChatFeedShowSeconds so it
@@ -5831,7 +5841,7 @@ proc stepConversationQueue(
   sim.convQueueFurthest = max(sim.convQueueFurthest, sim.tickCount)
   if sim.convQueueCommitted:
     let item = sim.convQueue[sim.convQueueIndex]
-    if sim.tickCount >= item.deathTick:
+    if sim.tickCount >= item.deathTick and not sim.replayDialoguePending():
       # This conversation has played end-to-end.
       sim.convQueueCommitted = false
       sim.releaseDirectorCommit()
@@ -6163,7 +6173,9 @@ proc advanceReplayPresentation*(
   if pausedRefresh and not sim.replayPresentationDirty and sim.directorCamW > 0:
     return
   if replay.playing:
-    sim.replayPresentationTime += 1.0 / float(ReplayFps)
+    let speed = replay.replaySpeedIndex()
+    sim.replayPresentationTime += float(PlaybackSpeedTicks[speed]) /
+      float(ReplayFps * PlaybackSpeedFrames[speed])
     # Queue-mode bookkeeping: commit at births, release at
     # deaths, rewind through same-tick birth groups, resume
     # from the furthest tick shown.
@@ -6171,13 +6183,15 @@ proc advanceReplayPresentation*(
     # Speed is a multiplier of the director's current base pace at every
     # setting. Slow motion must never advance faster than the 1X show.
     let
+      dialoguePending = sim.replayDialoguePending()
       showPacing = directorWatching and
-        (sim.directorFocusActive or sim.directorDinnerTtl > 0)
-      betweenConversations = sim.convQueue.len > 0 and
-        not sim.convQueueCommitted and sim.directorDinnerTtl <= 0
-      speed = replay.replaySpeedIndex()
+        (sim.directorFocusActive or sim.directorDinnerTtl > 0) and
+        (sim.convQueue.len == 0 or dialoguePending)
+      quietReplay = sim.convQueue.len > 0 and
+        ((not sim.convQueueCommitted and sim.directorSceneMap == MainMapIndex) or
+          not dialoguePending)
       numerator = PlaybackSpeedTicks[speed] *
-        (if betweenConversations: QueueFastForwardTicks else: 1)
+        (if quietReplay: QueueFastForwardTicks else: 1)
       denominator = PlaybackSpeedFrames[speed] *
         (if showPacing: DirectorShowFrames else: 1)
       rateKey = numerator * 100 + denominator
@@ -6203,6 +6217,11 @@ proc advanceReplayPresentation*(
     for _ in 0 ..< ticksThisFrame:
       if replay.playing:
         replay.stepReplay(sim)
+        if quietReplay and sim.replayDialoguePending():
+          # Stop on a newly captured line, even at high speed. Let the
+          # regular card clock show it before advancing through silence.
+          sim.directorShowAccum = 0
+          break
     if replay.looping and not replay.playing and
         replay.replayMaxTick() > 0:
       sim.restartConversationQueue()

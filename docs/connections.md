@@ -3,8 +3,31 @@
 This feature branch is rebased onto viewer stability PR #50 at `e164a7e`.
 Merge #50 first, then rebase onto master; the connections work stays in PR #51.
 
-[Current screenshots](connections/review-2026-09-11/README.md) ·
+[Current screenshots](connections/director-repair-2026-09-11/README.md) ·
 [Run a real local Claude-subscription playtest](claude-subscription-replays.md).
+
+## Director repair — September 11
+
+The first public viewer passed simulation hashes but was not watchable at its
+normal speed. The real recording spaces many model replies 360 ticks apart;
+the director slowed every tick of an open conversation by five, including silence.
+The first shot lasted **451.8 seconds**, and a later Yura shot **651.8 seconds**.
+The earlier regression fixture had much shorter reply gaps and missed this.
+
+The director now keeps reading time for queued dialogue, advances faster through
+empty stretches, and stops on each newly captured line. It drains the last line
+before leaving a shot. Playback speed scales the reading clock too; pause still
+freezes everything. Old recordings close leftover groups when a new recorded day
+starts. The live brains also remove old book membership before the morning reset,
+so yesterday's groups cannot keep scheduling the same gnome.
+
+The unchanged real recording now reaches all **12 conversations** in **8,821 frames**
+at 1X, with **49 distinct aired lines**; the first shot is **36.7 seconds**.
+`tests/real_replay_director.nim` drives the same frame entry point as the static
+viewer, checks pause and every conversation, and runs all eight playback speeds.
+These are native/protocol checks; browser/GPU click-through remains unavailable
+while the Mac is locked. The old game trace is preserved, including its historical
+model decisions and interview timeouts.
 
 ## What ships
 
@@ -91,7 +114,7 @@ the static WASM build. New viewer checks exercise selection, reflection pages,
 pause, next/previous, speeds, end/restart, and forward/backward seeks across days.
 
 The authored fixture does not validate model ranking quality or request latency.
-The [current screenshot gallery](connections/review-2026-09-11/README.md) uses the
+The [current screenshot gallery](connections/director-repair-2026-09-11/README.md) uses the
 separate **real Claude replay**, rendered with the latest viewer code. It shows
 numeric points, ten Connections hearts, the “Connection with Anton” card label,
 and the full debug graph both closed and explicitly opened. These are offline
@@ -125,6 +148,7 @@ out/heartleaf --load-replay:docs/connections/claude/two-day.bitreplay --port:808
 Production deployment or merge; tournament reward changes; automatic promise
 tracking or event-based point bonuses; ties/absolute ratings; relationship decay;
 persistence across separate episodes; the removed right-side conversation list;
-and automatic live-model quality evaluation. PR #50's replay controls, camera
-timing, map geometry, font sizes, muted ground texture and original portrait pixels
-are preserved. Its removed logo and bricks are not restored.
+and automatic live-model quality evaluation. PR #50's replay control layout, camera
+transitions, map geometry, font sizes, muted ground texture and original portrait
+pixels are preserved; the director repair above changes pacing through silence.
+Its removed logo and bricks are not restored.

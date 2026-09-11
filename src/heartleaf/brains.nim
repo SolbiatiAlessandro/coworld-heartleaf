@@ -901,6 +901,9 @@ proc advance*(
     let observation = observations[houseIndex]
     villager.now = now
     if observation.dayNumber != villager.dayNumber and villager.dayNumber > 0:
+      # startNewDay clears the villager's id; first remove their old
+      # membership so yesterday's book cannot schedule or detach them.
+      brains.leaveEncounter(villager)
       villager.abandonRequest()
       villager.turnReady = false
       brains.phase = LlmPhase
