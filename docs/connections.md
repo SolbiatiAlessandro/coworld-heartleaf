@@ -67,8 +67,8 @@ old/new pair strengths and the partner's recorded reason for discussion tomorrow
 
 ## Review and validation
 
-The committed fixture is an **authored two-day scenario with scripted model replies**,
-not a paid/autonomous model run. It uses normal movement and the actual brain
+The original fixture, `connections/two-day.replay`, is an **authored two-day
+scenario with scripted model replies**. It uses normal movement and the actual brain
 interview/action handlers. It has nine gnomes, six conversations, eighteen valid
 bedtime interviews, two daily commits and twelve deliberate reactions. All 9,120
 simulation ticks replay with matching hashes; the full director playback is checked
@@ -92,11 +92,34 @@ pause, next/previous, speeds, end/restart, and forward/backward seeks across day
 The images below are **offline renders of actual replay sprite-protocol frames**.
 The Mac was locked, so OS/browser click-through was unavailable. The authored
 fixture does not validate model ranking quality or request latency. Claude
-subscription playtest observations are documented separately when complete.
+subscription playtest observations are [documented separately](connections/claude-observations.md).
 
 ![Day two leaderboard](connections/06-day-two-overview.png)
 ![Conversation with half-filled hearts and intentional reactions](connections/03-conversation.png)
 ![Full village debug graph and selected gnome reflections](connections/07-bedtime-results.png)
+
+## Real Claude-subscription playtest
+
+A separate nine-gnome, two-day run uses the normal example souls and actual Haiku
+4.5 replies through the local Claude.ai subscription. It produced 15 valid bedtime
+interviews out of 18: all nine on day one and six on day two. Three second-night
+calls exceeded the local deadline and contributed zero. Both daily updates were
+recorded. The longer local timing profile differs from ordinary league play.
+
+[Observations and evidence](connections/claude-observations.md) ·
+[Run manifest](connections/claude/manifest.json) ·
+[Portable recording](connections/claude/two-day.bitreplay)
+
+The run includes an accepted decision explicitly citing a connection value,
+a delivered happy reaction, and Dima hosting Vova on day two: Dima earned 15 total (9 from eating plus
+6 from hosting), while Vova earned 9 from eating. It also exposes important limits: day-one party warmth was
+rewarded despite missed dinners, and mandatory rankings lowered connections
+between gnomes who had not interacted. This is descriptive evidence from one
+small run, without a no-connections control.
+
+```sh
+out/heartleaf --load-replay:docs/connections/claude/two-day.bitreplay --port:8084
+```
 
 ## Out of scope
 

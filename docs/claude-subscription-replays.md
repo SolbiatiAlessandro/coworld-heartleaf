@@ -73,3 +73,7 @@ playtest establishes about normal league behavior.
 
 Tests for the bridge use mocked subprocess results and do not spend subscription
 usage: `python3 tests/claude_subscription_bridge_test.py`.
+
+The recorded two-day evaluation, its failure cases and behavioral observations are
+[available here](connections/claude-observations.md). Reproduce its offline viewer
+frames with `nim r tools/render_connection_replay.nim docs/connections/claude/two-day.bitreplay out/claude-review`.
