@@ -3,9 +3,10 @@
 ## hashes, model calls or borrowed recording. This is a scripted test game,
 ## not a claim about autonomous model behavior.
 ## nim r tools/record_connection_scenario.nim OUTPUT.replay
-import std/[json, os, tables, strutils], heartleaf, replays
+import std/[importutils, json, os, tables, strutils], heartleaf, replays
 import heartleaf/[common, decisions, executor, protocol, souls, villager, brains, bedrock_client, observation, connections]
 import bitworld/spriteprotocol
+privateAccess(SimServer)
 
 let output = if paramCount()>0: paramStr(1) else: "out/connections-scenario.replay"
 const Seed = 7301
@@ -162,13 +163,17 @@ show.buildReplayKeyframes(Seed,DayTicks)
 show.looping = false
 director.buildConversationQueue(show.replayMaxTick())
 doAssert director.convQueue.len == 6
-var frames, held, previous: int
+var frames, held: int
+var previous: tuple[tick:int, bedtime:float]
 while show.playing and frames < 100000:
   director.advanceReplayPresentation(show)
-  if director.tickCount == previous: inc held
+  # Bedtime intentionally holds the world while its reading clock advances.
+  let progress = (director.tickCount,
+    if director.replayNightActive: director.replayNightTime else: -1.0)
+  if progress == previous: inc held
   else: held = 0
-  doAssert held < 300, "director must not stall"
-  previous = director.tickCount
+  doAssert held < 300, "director and bedtime presentation must not stall"
+  previous = progress
   inc frames
   doAssert not show.hashValidationFailed
 doAssert director.tickCount == 9120
