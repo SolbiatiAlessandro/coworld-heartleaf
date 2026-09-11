@@ -1,6 +1,6 @@
 # Connections
 
-This feature branch is rebased onto viewer stability PR #50 at `63146e5`.
+This feature branch is rebased onto viewer stability PR #50 at `e164a7e`.
 Merge #50 first, then rebase onto master; the connections work stays in PR #51.
 
 [Run a real local Claude-subscription playtest](claude-subscription-replays.md).
