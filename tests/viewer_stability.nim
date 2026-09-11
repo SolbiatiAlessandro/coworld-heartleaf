@@ -264,8 +264,7 @@ for tier in 0..2:
       let color = sprite.rgbaSpriteAt(x,y)
       doAssert color.a in [0'u8,255'u8], "pixel icons have no smooth alpha edges"
 
-# A conversation at the right edge would sit underneath the default
-# right-hand card. The card must relocate to a clear side of the shot.
+# Cards retain screen-space slots when gnomes walk or the camera drifts.
 sim.players[0].x=sim.mainMap.width-45
 sim.players[0].y=315
 sim.players[1].x=sim.mainMap.width-80
@@ -276,13 +275,63 @@ sim.directorCamX=float(sim.mainMap.width-250)
 sim.directorCamY=183
 var edgeState=newReplayViewerState()
 edgeState.setViewerSize(1280,720)
-var relocated=false
+var edgeCard=false
 for msg in parseSpritePacket(sim.buildGlobalPacket(edgeState,next,replayControls=true)):
   if msg.kind==spkObject and msg.objectDef.id==28_000:
-    relocated=true
-    doAssert msg.objectDef.x < 176, "card must move away from the gnomes at the right edge"
+    edgeCard=true
+    doAssert msg.objectDef.x == 14, "the first card keeps its left-hand slot"
     doAssert msg.objectDef.y >= 18, "portrait must clear the window edge"
-doAssert relocated
+doAssert edgeCard
+
+block:
+  let anchored = initSimServer(42)
+  for i in 0..2:
+    discard anchored.addPlayer("anchored " & $i, i)
+    anchored.players[i].mapIndex = 0
+    anchored.players[i].x = 320 + i*20
+    anchored.players[i].y = 300
+  anchored.directorFocusActive = true
+  anchored.directorFocusRadius = 80
+  anchored.directorFocusX = 350
+  anchored.directorFocusY = 330
+  anchored.directorFrameBlend = 1
+  anchored.directorCamX = 200
+  anchored.directorCamY = 170
+  anchored.directorCamW = 250
+  anchored.directorCamH = 314
+  anchored.directorCommitEncounter = 888
+  for turn, seat in [2, 0, 2, 1]:
+    anchored.queueDelayChat(anchored.players[seat].playerName,
+      if turn == 2: "I have carrots, cabbage, and grapes ready for supper. Shall we bring them to your house and invite all our friends?"
+      else: "Carrots for supper.")
+    anchored.chatFeed[turn].encounterId = 888
+  anchored.chatFeedScope = 888
+  var view = newReplayViewerState()
+  view.setViewerSize(1280,720)
+  var anchors = initTable[int, tuple[x,y:int]]()
+  for turn in 0..3:
+    anchored.advanceChatFeedNow(float(turn*10))
+    for step in 0..5:
+      anchored.players[2].x = 250 + step*45
+      anchored.players[0].y = 250 + step*20
+      anchored.directorCamX = 180 + float(step*12)
+      let packet = anchored.buildGlobalPacket(view,next,replayControls=true)
+      var faces, strips = initTable[int,int]()
+      for msg in parseSpritePacket(packet):
+        if msg.kind != spkObject: continue
+        let obj = msg.objectDef
+        if obj.id in 28_000..<28_003:
+          let point = (obj.x,obj.y)
+          if anchors.hasKey(obj.id):
+            doAssert point == anchors[obj.id],
+              "walking, camera drift, later speakers and longer turns must not move cards"
+          else: anchors[obj.id] = point
+        if obj.id in 28_100..<28_103: faces[obj.id-28_100] = obj.y
+        if obj.id in 28_200..<28_203: strips[obj.id-28_200] = obj.y
+      for seat, y in faces:
+        doAssert y + 54 == strips[seat],
+          "the native portrait must sit directly on the identity strip"
+  doAssert anchors.len == 3, "later speakers must appear without displacing earlier cards"
 echo "Viewer stability checks passed"
 
 # All nine seats retain distinct protocol IDs (objects are uint16). Crowded
@@ -321,7 +370,7 @@ block:
         objects.add(obj.id)
       if obj.id in 62_000..<63_000:
         latestLetters.add(char(obj.spriteId-9400))
-  doAssert seats.len == 6 and 8 in seats
+  doAssert seats.len == 9 and 8 in seats
   doAssert "Carrots for supper." in latestLetters,
     "the ninth gnome's glyph IDs must survive the uint16 wire format"
 

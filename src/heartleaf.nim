@@ -630,6 +630,9 @@ type
     scrubbingReplay: bool
     leaderboardButton: ViewerRect
     openPanel: int
+    cardLayoutKey: string
+    cardRowHeight: int
+    cardSlots: array[HouseCount, int] # One-based slots, retained for this shot.
 
   RunConfig = ref object
     address: string
@@ -3626,8 +3629,8 @@ proc directorCard(sim: SimServer, item: ChatFeedItem, playerIndex, width: int): 
   result.frameY = 14
   result.textX = result.portraitSize + 13
   result.textY = 24
-  result.lines = sim.viewerMessageLines(item.message, width - 28, ViewerBodyHeight,
-    firstWidth = width - result.textX - 12, firstRows = 7)
+  result.lines = sim.viewerMessageLines(item.message,
+    width - result.textX - 12, ViewerBodyHeight)
   result.headerX = 6
   result.headerWidths[0] = 42
   result.headerWidths[1] = width - 12 - result.headerWidths[0]
@@ -3636,7 +3639,7 @@ proc directorCard(sim: SimServer, item: ChatFeedItem, playerIndex, width: int): 
     result.headerHeight = max(result.headerHeight, result.headerLines[i].len * 9 + 9)
   # The portrait protrudes above the parchment; the light wooden identity
   # strip straddles its bottom edge, as in the approved reference.
-  result.headerY = max(82, result.textY + result.lines.len * 9 + 10)
+  result.headerY = max(result.portraitSize, result.textY + result.lines.len * 9 + 3)
   result.height = result.headerY + result.headerHeight
 
 proc activeDirectorCards(sim: SimServer, width: int): seq[DirectorCard] =
@@ -3753,7 +3756,8 @@ proc addDirectorCard(
   # alternated one- and two-pixel widths, distorting eyes, hats and beard details.
   packet.addRgbaSpriteCached(cache, faceId, source,
     "director portrait " & player.playerName)
-  packet.addObject(28_100 + card.playerIndex, rect.x + 7, rect.y, 2,
+  packet.addObject(28_100 + card.playerIndex, rect.x + 7,
+    rect.y + card.headerY - card.portraitSize, 2,
     DirectorFrameLayerId, faceId)
   let
     headerWidth = card.headerWidths[0] + card.headerWidths[1]
@@ -3785,7 +3789,7 @@ proc addDirectorCard(
         rect.y + card.headerY + (headerHeight - lines.len * 9 + 3) div 2 + i * 9)
     columnX += card.headerWidths[column]
   for i, line in card.lines:
-    textRun(line, rect.x + (if i < 7: card.textX else: 14),
+    textRun(line, rect.x + card.textX,
       rect.y + card.textY + i * lineHeight)
 
 proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
@@ -3873,51 +3877,59 @@ proc addDirectorWorldView(
       focusBlend = sim.directorFrameBlend,
       overviewAspect = (if forestBackdrop: 1.5 else: 0.0), sidebars = true)
   var cards = sim.activeDirectorCards(min(DirectorCardWidth, max(160, canvasWidth - 28)))
-  var tallest = 0
-  for card in cards: tallest = max(tallest,card.height)
-  let columns = max(1,min(3,(layout.canvasWidth-20) div (DirectorCardWidth+8)))
-  let capacity = columns * max(1,(layout.canvasHeight-72) div max(1,tallest+8))
+  # Reserve screen-space slots for the whole shot. Neither camera drift nor
+  # moving gnomes may reposition dialogue. Recorded future lines determine
+  # space only; activeDirectorCards still controls which text has aired.
+  let layoutKey = $layout.canvasWidth & ":" & $layout.canvasHeight & ":" &
+    $sim.directorSceneMap & ":" & $sim.chatFeedScope & ":" &
+    $sim.directorCommitEncounter & ":" & $replayControls
+  if cards.len > 0:
+    var tallest = 0
+    for card in cards: tallest = max(tallest,card.height)
+    if state.cardLayoutKey != layoutKey or tallest > state.cardRowHeight:
+      state.cardLayoutKey = layoutKey
+      state.cardSlots = default(typeof(state.cardSlots))
+      state.cardRowHeight = tallest
+      for index, item in sim.chatFeed:
+        if not sim.chatFeedScopeMatches(index): continue
+        for i, player in sim.players:
+          if player.playerName == item.speaker.name:
+            state.cardRowHeight = max(state.cardRowHeight,
+              sim.directorCard(item,i,cards[0].width).height)
+            break
+  elif not conversation:
+    state.cardLayoutKey = ""
+    state.cardSlots = default(typeof(state.cardSlots))
+  let
+    cardWidth = min(DirectorCardWidth, max(160, canvasWidth - 28))
+    columns = max(1,min(3,(layout.canvasWidth-20) div (cardWidth+8)))
+    bottom = layout.canvasHeight - (if replayControls: 54 else: 14)
+    rows = max(0,(bottom-18+8) div max(1,state.cardRowHeight+8))
+    capacity = columns * rows
   if cards.len > capacity: cards.setLen(capacity)
-  # Stable speaker order keeps cards from exchanging sides on each turn.
+  # Reuse an old slot only when its speaker is no longer in the visible set.
+  # A later speaker or a repeated turn never shifts the retained cards.
+  for i in 0..<state.cardSlots.len:
+    var visible = false
+    for card in cards:
+      if card.playerIndex == i: visible = true
+    if not visible: state.cardSlots[i] = 0
   cards.sort(proc(a,b: DirectorCard): int = cmp(a.playerIndex,b.playerIndex))
   var placed: seq[tuple[card: DirectorCard, rect: ViewerRect]]
-  # Fill clear edges first. Recent speakers have priority if a small window
-  # cannot hold every card; never overlap cards or the transport.
-  let scale = min(float(layout.canvasWidth) / float(layout.width),
-    float(layout.canvasHeight) / float(layout.height))
-  proc overlapArea(a, b: ViewerRect): int =
-    max(0, min(a.x+a.width,b.x+b.width)-max(a.x,b.x)) *
-      max(0, min(a.y+a.height,b.y+b.height)-max(a.y,b.y))
   for card in cards:
-    var best = high(int)
-    var chosen: ViewerRect
-    let bottom = layout.canvasHeight - (if replayControls: 54 else: 14) - card.height
-    for x in [14, layout.canvasWidth - card.width - 14,
-        (layout.canvasWidth - card.width) div 2]:
-      for y in countup(18, bottom, 6):
-        let candidate = ViewerRect(x:x,y:y,width:card.width,height:card.height)
-        var blocked = false
-        for other in placed:
-          var padded = other.rect
-          padded.x -= 4; padded.y -= 4
-          padded.width += 8; padded.height += 8
-          if overlapArea(candidate,padded)>0: blocked = true
-        if blocked: continue
-        # Keep the center of the world open and prefer the bottom corners.
-        var score = bottom-y
-        if x == (layout.canvasWidth-card.width) div 2: score += 1000
-        for player in sim.players:
-          if player.mapIndex != sim.directorSceneMap: continue
-          let bounds = ViewerRect(
-            x:int(float(player.x-layout.x-4)*scale),
-            y:int(float(player.y-layout.y-36)*scale),
-            width:int(ceil(float(GnomeSpriteSize+8)*scale)),
-            height:int(ceil(float(GnomeSpriteSize+40)*scale)))
-          score += overlapArea(candidate,bounds)*100
-        if score < best:
-          best = score
-          chosen = candidate
-    if best < high(int): placed.add((card,chosen))
+    if state.cardSlots[card.playerIndex] == 0:
+      for slot in 1..capacity:
+        if slot notin state.cardSlots:
+          state.cardSlots[card.playerIndex] = slot
+          break
+    let slot = state.cardSlots[card.playerIndex]-1
+    if slot < 0: continue
+    let column = slot mod columns
+    let x = if column == 0: 14
+      elif column == 1: layout.canvasWidth-card.width-14
+      else: (layout.canvasWidth-card.width) div 2
+    let y = bottom-state.cardRowHeight-(slot div columns)*(state.cardRowHeight+8)
+    placed.add((card,ViewerRect(x:x,y:y,width:card.width,height:card.height)))
   let
     cameraX = layout.x
     cameraY = layout.y

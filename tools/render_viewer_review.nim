@@ -14,6 +14,7 @@ privateAccess(typeof(sim.homeMaps[0]))
 privateAccess(typeof(sim.conversationCircles[0]))
 
 import viewer_review_render
+privateAccess(PlayerViewerState)
 
 let output = if paramCount()>0: paramStr(1) else: "out/viewer-review"
 createDir(output)
@@ -70,6 +71,25 @@ sim.chatFeed[1].hearers = @[typeof(sim.chatFeed[0].hearers[0])(
 sim.advanceChatFeedNow(10)
 capture("rendered-two-cards.png")
 capture("rendered-two-cards-narrow.png",320,700)
+# Keep the viewer state across two frames: only world positions change.
+block:
+  var pinned = newReplayViewerState()
+  pinned.setViewerSize(1280,720)
+  let originalX = sim.players[0].x
+  let originalCamera = sim.directorCamX
+  for step in 0..1:
+    sim.players[0].x = originalX + step*20
+    sim.directorCamX = originalCamera + float(step*12)
+    # The offline compositor takes a complete packet, so resend sprite assets
+    # without discarding the persistent card-slot state under review.
+    pinned.initialized = false
+    pinned.spriteCache.setLen(0)
+    var next: PlayerViewerState
+    render(sim.buildGlobalPacket(pinned,next,replayControls=true,
+      replayTick=sim.tickCount,replayMaxTick=9120),1280,720,
+      output / ("rendered-pinned-" & $step & ".png"))
+  sim.players[0].x = originalX
+  sim.directorCamX = originalCamera
 for i in 2..5:
   discard sim.addPlayer("guest " & $i,i)
   sim.players[i].mapIndex=0

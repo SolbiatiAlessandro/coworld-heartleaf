@@ -18,7 +18,10 @@ hand-drawn village, walk masks, house locations, replay format, and game rules.
   and the viewer's logo crop/resizing code have been removed.
 - Settled conversation shots show one compact card per gnome who has spoken,
   updated with their latest aired line. Portraits protrude above the parchment;
-  the bottom strip holds only name and relationship. Cards avoid each other
+  the bottom strip holds only name and relationship, directly beneath the portrait
+  with no empty gap. Cards retain screen-space slots while gnomes walk and the
+  camera drifts; later speakers do not displace existing cards. Recorded lines
+  reserve row height for the shot without revealing future dialogue. Cards avoid each other
   and the transport. Small windows show the most recent speakers that fit.
 - Dialogue portraits retain all 54×54 source pixels. Leaderboard icons use a
   uniform 2:1 reduction to 27×27 instead of the previous irregular 54→20
@@ -68,6 +71,15 @@ remain pending. All older screenshot iterations were removed from this gallery.
 
 ![Six speakers with clear transport](viewer-stability/05-six-speakers.png)
 
+### Walking and camera drift: the cards stay in place
+
+These two successive controlled frames retain the same viewer state. Ivan walks
+and the camera shifts, while both card anchors remain unchanged.
+
+![Before movement](viewer-stability/10-pinned-before.png)
+
+![After movement](viewer-stability/11-pinned-after.png)
+
 ### Circular rooms, including night
 
 ![Day room](viewer-stability/06-room-day.png)
@@ -109,7 +121,10 @@ validation covers the game and soul-player builds, unit tests, viewer stability,
 leaderboard layout, controls, routes, integration, and regeneration/playback of
 the complete scenario. New assertions check content-fit panel height, all nine
 short-window rows, exact dialogue portrait pixels, uniform thumbnail sampling,
-and absent logo sprites. Existing controls coverage includes 64 pause/speed
+and absent logo sprites. Further regressions cover stationary card anchors through
+walking, camera drift, later speakers and longer recorded turns, plus exact
+portrait-to-strip contact and all nine short cards fitting without dropping a
+speaker. Existing controls coverage includes 64 pause/speed
 combinations, rapid next clicks, seek ordering, and end/restart behavior.
 
 ```sh
@@ -127,7 +142,7 @@ tools/build_replay_viewer.sh "$PWD/out/static-replay-viewer"
 The September 10 local run used native Nim 2.2.12 and the pinned static Nim
 2.2.4/Emscripten toolchain; GitHub CI uses native Nim 2.2.10. See the PR checks
 for CI results on its current head. All local suites and both builds passed.
-A fresh native WebSocket run acknowledged all 12 play/pause trials in 24–51 ms
+The earlier `63146e5` native WebSocket run acknowledged all 12 play/pause trials in 24–51 ms
 (median 28 ms) and streamed the complete 4,500-tick recording. These are server
 response timings, not browser display latency.
 
