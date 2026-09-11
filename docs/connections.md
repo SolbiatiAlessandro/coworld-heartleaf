@@ -1,7 +1,7 @@
 # Connections
 
-This feature branch builds on viewer stability PR #50. Merge #50 first, then
-rebase this branch onto master; the feature commits are separate from that work.
+This feature branch is rebased onto viewer stability PR #50 at `63146e5`.
+Merge #50 first, then rebase onto master; the connections work stays in PR #51.
 
 ## What ships
 
@@ -10,22 +10,23 @@ rebase this branch onto master; the feature commits are separate from that work.
 - At **9pm**, after the day's dinner outcomes have entered each gnome's memory,
   the score screen waits for one bedtime interview per gnome. The model ranks
   every other seated gnome and gives short reasons grounded in that day's events.
-- The left leaderboard keeps the Heartleaf title and adds separate **game-point**
-  and **connection** bars. The latter sums current bonds: initially 4, maximum 8
-  with nine gnomes. Game points scale to the current leader; connections use the
-  fixed number of partners. The existing game reward/winner rules are unchanged.
-- Conversation cards retain their existing portrait, type size and layout. Their
-  relationship strip shows the listener's name and **three pixel hearts**, with
-  partial fill: a 0.5 bond is one full heart, one half heart, one empty heart.
+- The compact left leaderboard shows **numeric game points** and **ten pixel
+  connection hearts**. Heart fill is the average of that gnome's pair strengths
+  multiplied by ten: five filled hearts initially, zero through ten overall.
+  There are no bars. The existing game reward/winner rules are unchanged.
+- Conversation cards keep the original font and 54px portraits. Their identity
+  strip says **“Connection with Anton”** (the named listener) above three pixel
+  hearts. A 0.5 pair is one full, one half-full and one empty heart.
 - `send_emoji` is a deliberate model action targeting a nearby visible gnome:
   `happy`, `very_happy`, `sad`, or `very_sad`. Small pixel faces clear the gnome's
   portrait/body and disappear after their recorded animation. The recipient
   notices the reaction in its memory. Proximity and spoken-turn count no longer
   emit reactions or change the new bond score.
-- Select a leaderboard gnome to inspect its graph of shared bonds, last recorded
-  action and latest bedtime ranking/reasons. Longer interviews have reflection
-  pages. Select the same gnome again to close. The inspector hides during the
-  director's conversation shots, which still fill the window.
+- **Debug: connections** opens the full village graph; it is closed by default.
+  All nine gnomes and all 36 pairs remain visible. Select a graph portrait to
+  highlight its edges, inspect the percentages, last recorded action and bedtime
+  ranking/reasons. Long reflections have pages. Close the graph with the same
+  debug button. Leaderboard rows have no inspector click action.
 - Pair snapshots, interviews, actions and reactions travel inside the replay.
   Both native and static viewers derive them from the playhead, including backward
   seeks and concurrent-conversation rewinds. Old replays remain playable and show
@@ -84,17 +85,19 @@ the static WASM build. New viewer checks exercise selection, reflection pages,
 pause, next/previous, speeds, end/restart, and forward/backward seeks across days.
 
 The images below are **offline renders of actual replay sprite-protocol frames**.
-The Mac was locked, so OS/browser click-through was unavailable. Real model ranking
-quality, request latency and remote deployment have not been validated by this fixture.
+The Mac was locked, so OS/browser click-through was unavailable. The authored
+fixture does not validate model ranking quality or request latency. Claude
+subscription playtest observations are documented separately when complete.
 
 ![Day two leaderboard](connections/06-day-two-overview.png)
 ![Conversation with half-filled hearts and intentional reactions](connections/03-conversation.png)
-![Selected gnome graph and bedtime reflections](connections/07-bedtime-results.png)
+![Full village debug graph and selected gnome reflections](connections/07-bedtime-results.png)
 
 ## Out of scope
 
 Production deployment or merge; tournament reward changes; automatic promise
 tracking or event-based point bonuses; ties/absolute ratings; relationship decay;
 persistence across separate episodes; the removed right-side conversation list;
-and automatic live-model quality evaluation. The existing replay controls, camera
-timing, map geometry, font sizes, brick background and dialogue layout are preserved.
+and automatic live-model quality evaluation. PR #50's replay controls, camera
+timing, map geometry, font sizes, muted ground texture and original portrait pixels
+are preserved. Its removed logo and bricks are not restored.

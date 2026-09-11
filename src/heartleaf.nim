@@ -630,7 +630,9 @@ type
     cardLayoutKey: string
     cardRowHeight: int
     cardSlots: array[HouseCount, int] # One-based slots, retained for this shot.
-    connectionSelection*: int # seat + 1, zero means no inspector
+    connectionDebugOpen*: bool
+    connectionDebugButton: ViewerRect
+    connectionSelection*: int # seat + 1; zero means full-graph introduction
     connectionReflectionPage: int
     connectionNextPage: ViewerRect
     connectionButtons: seq[tuple[seat:int, rect:ViewerRect]]
@@ -3571,7 +3573,7 @@ proc directorCard(sim: SimServer, item: ChatFeedItem, playerIndex, width: int): 
     let bonds = sim.connectionTimeline.bondsAt(sim.tickCount)
     result.hasConnection = bonds.len > 0
     result.connectionStrength = bonds.strength(seat,otherSeat)
-    result.connectionLabel = sim.players[listener].playerName & ":"
+    result.connectionLabel = "Connection with " & sim.players[listener].playerName
     relation = if result.hasConnection: "" else: "Not recorded"
   result.width = width
   result.portraitSize = DirectorCardPortraitSize
@@ -3586,6 +3588,7 @@ proc directorCard(sim: SimServer, item: ChatFeedItem, playerIndex, width: int): 
   for i, label in [player.playerName, relation]:
     result.headerLines[i] = sim.viewerMessageLines(label, result.headerWidths[i] - 12, ViewerBodyHeight)
     result.headerHeight = max(result.headerHeight, result.headerLines[i].len * 9 + 9)
+  if result.hasConnection: result.headerHeight = max(result.headerHeight, 28)
   # The portrait protrudes above the parchment; the light wooden identity
   # strip straddles its bottom edge, as in the approved reference.
   result.headerY = max(result.portraitSize, result.textY + result.lines.len * 9 + 3)
@@ -3662,7 +3665,7 @@ proc hasCachedSprite(cache: seq[SpriteCacheEntry], id, width, height: int): bool
 
 proc addViewerText(packet: var seq[uint8], sim: SimServer,
     cache: var seq[SpriteCacheEntry], text: string, x, y: int,
-    slot: var int, height = ViewerBodyHeight, objectBase = 52_000, dark = false) =
+    slot: var int, height = ViewerBodyHeight, objectBase = 52_000, dark = false, z = 6) =
   ## Reuse the original Tiny5 glyphs and spacing, with no font resampling.
   var dx = x
   for ch in text:
@@ -3675,7 +3678,7 @@ proc addViewerText(packet: var seq[uint8], sim: SimServer,
           glyph.pixels[i+1] = 0x38
           glyph.pixels[i+2] = 0x1f
       packet.addRgbaSpriteCached(cache, id, glyph, "director glyph " & $ch)
-    packet.addObject(objectBase+slot,dx,y,6,DirectorFrameLayerId,
+    packet.addObject(objectBase+slot,dx,y,z,DirectorFrameLayerId,
       id)
     inc slot
     dx += sim.textFont.glyphAdvance(ch)
@@ -3731,13 +3734,14 @@ proc addDirectorCard(
   if card.hasConnection:
     let id = 12_000 + int(round(card.connectionStrength * 100))
     packet.addRgbaSpriteCached(cache,id,pixelHearts(card.connectionStrength),"connection hearts " & $card.connectionStrength)
-    let start = rect.x + card.headerX + card.headerWidths[0] + 8
+    let start = rect.x + card.headerX + card.headerWidths[0]
+    let labelWidth = sim.viewerTextWidth(card.connectionLabel,ViewerBodyHeight)
     var labelSlot = 0
-    packet.addViewerText(sim,cache,card.connectionLabel,start,rect.y+card.headerY+6,
+    packet.addViewerText(sim,cache,card.connectionLabel,start+(card.headerWidths[1]-labelWidth) div 2,rect.y+card.headerY+6,
       labelSlot,objectBase=64_000+card.playerIndex*100,dark=true)
     packet.addObject(64_900+card.playerIndex,
-      start+sim.viewerTextWidth(card.connectionLabel,ViewerBodyHeight)+6,
-      rect.y+card.headerY+5,6,DirectorFrameLayerId,id)
+      start+(card.headerWidths[1]-25) div 2,
+      rect.y+card.headerY+16,6,DirectorFrameLayerId,id)
   var glyphSlot = 0
   template textRun(text: string, x, y: int) =
     packet.addViewerText(sim, cache, text, x, y, glyphSlot, ViewerBodyHeight, 54_000 + card.playerIndex * 1_000, dark = true)
@@ -3754,8 +3758,6 @@ proc addDirectorCard(
 proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
     state: PlayerViewerState, layout: ViewerLayout) =
   state.leaderboardButton = ViewerRect()
-  state.connectionButtons.setLen(0)
-  state.connectionNextPage = ViewerRect()
   var slot = 0
   template text(label: string, x, y: int, height: int = ViewerBodyHeight) =
     packet.addViewerText(sim, state.spriteCache, label, x, y, slot, height)
@@ -3786,30 +3788,165 @@ proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
     ch = layout.canvasHeight
     wide = layout.railWidth > 0
     panelY = if wide: 4 else: 36
+    hasConnections = sim.connectionTimeline.bondsAt(sim.tickCount).len > 0
+    heading = if hasConnections: 14 else: 0
     rowH = FaceSize + 1
     # The wide rail sits beside the transport, so it can use the full height.
-    rowCount = min(sim.players.len, max(0,(ch-panelY-20-(if wide: 4 else: 52)) div rowH))
+    rowCount = min(sim.players.len, max(0,(ch-panelY-20-heading-(if wide: 4 else: 52)) div rowH))
   if not wide:
     let left = ViewerRect(x:4,y:18,width:94,height:18)
     frame(9853,50_003,left)
     text("Leaderboard",left.x+9,23)
     state.leaderboardButton = left
   if (wide or state.openPanel == 1) and rowCount > 0:
-    let panel = ViewerRect(x:2,y:panelY,width:ViewerRailWidth-4,height:20+rowCount*rowH)
+    let panel = ViewerRect(x:2,y:panelY,width:ViewerRailWidth-4,height:20+heading+rowCount*rowH)
     frame(9850,50_000,panel)
+    if hasConnections:
+      text("Pts",panel.x+10,panel.y+10)
+      text("Connections",panel.x+55,panel.y+10)
     var order: seq[int]
     for i in 0..<sim.players.len: order.add(i)
     order.sort(proc(a,b:int):int = cmp(sim.players[b].score,sim.players[a].score))
     for rank, i in order:
       if rank >= rowCount: break
       let p = sim.players[i]
-      let y = panel.y+10+rank*rowH
+      let y = panel.y+10+heading+rank*rowH
+      let seat = p.homeFlag-HomeMapIndexBase
       text(p.score.globalPanelScoreText(),panel.x+10,y+9)
-      portrait(p.homeFlag-HomeMapIndexBase,panel.x+30,y)
+      portrait(seat,panel.x+26,y)
       let displayName = if p.username == p.playerName: p.playerName else: p.attributedDisplayName()
-      let label = sim.viewerMessageLines(displayName,panel.width-69,ViewerNameHeight)
+      let label = sim.viewerMessageLines(displayName,panel.width-65,ViewerNameHeight)
       for line in 0..<min(2,label.len):
-        text(label[line],panel.x+59,y+9-(if label.len>1: 4 else: 0)+line*9,ViewerNameHeight)
+        text(label[line],panel.x+55,y+(if hasConnections: 0 else: 9-(if label.len>1: 4 else: 0))+line*9,ViewerNameHeight)
+      if hasConnections:
+        let bonds = sim.connectionTimeline.bondsAt(sim.tickCount)
+        let strength = bonds.connectionScore(seat)/max(1,sim.players.len-1).float
+        let id = 13_000+seat
+        packet.addRgbaSpriteCached(state.spriteCache,id,pixelHearts(strength,10,1),
+          "leaderboard connections " & $seat & " " & $strength)
+        packet.addObject(65_000+seat,panel.x+55,y+20,6,DirectorFrameLayerId,id)
+
+proc addConnectionDebug(packet: var seq[uint8], sim: SimServer,
+    state: PlayerViewerState, layout: ViewerLayout) =
+  ## Explicit, opt-in observer view. It always includes every recorded pair.
+  state.connectionButtons.setLen(0)
+  state.connectionNextPage = ViewerRect()
+  let cw = layout.canvasWidth
+  let ch = layout.canvasHeight
+  let toggle = ViewerRect(x:max(4,cw-116),y:18,width:112,height:18)
+  state.connectionDebugButton = toggle
+  var slot = 0
+  template text(label:string,x,y:int) =
+    packet.addViewerText(sim,state.spriteCache,label,x,y,slot,
+      objectBase=48_000,dark=true,z=24)
+  template frame(id,obj:int,r:ViewerRect) =
+    if not state.spriteCache.hasCachedSprite(id,r.width,r.height):
+      packet.addRgbaSpriteCached(state.spriteCache,id,
+        sim.chatBanner.nineSliceSprite(r.width,r.height,PanelSliceInset),
+        "connections debug frame " & $id)
+    packet.addObject(obj,r.x,r.y,20,DirectorFrameLayerId,id)
+  frame(14_002,65_102,toggle)
+  text((if state.connectionDebugOpen: "Close debug graph" else: "Debug: connections"),toggle.x+9,toggle.y+6)
+  if not state.connectionDebugOpen: return
+  let panel = ViewerRect(x:max(4,(cw-min(600,cw-8)) div 2),y:40,
+    width:min(600,cw-8),height:max(120,min(360,ch-80)))
+  frame(14_000,65_100,panel)
+  text("Village connections",panel.x+14,panel.y+12)
+  let bonds = sim.connectionTimeline.bondsAt(sim.tickCount)
+  if bonds.len == 0:
+    text("Connections were not recorded in this replay.",panel.x+14,panel.y+30)
+    return
+  let split = panel.width >= 490
+  let gw = if split: panel.width-238 else: panel.width-24
+  let gh = if split: panel.height-48 else: min(210,(panel.height-60)*2 div 3)
+  let gx = panel.x+12
+  let gy = panel.y+29
+  var seats:seq[int]
+  for bond in bonds:
+    if bond.a notin seats: seats.add(bond.a)
+    if bond.b notin seats: seats.add(bond.b)
+  seats.sort()
+  let smallGraph = gh < 160
+  let faceSize = if smallGraph: 18 else: 27
+  var nodes:seq[tuple[seat,x,y:int]]
+  for i,seat in seats:
+    let angle = 2.0*PI*i.float/max(1,seats.len).float-PI/2
+    if smallGraph:
+      nodes.add((seat,(i mod 3)*gw div 3+gw div 6,(i div 3)*gh div 3+13))
+    else:
+      nodes.add((seat,gw div 2+int(cos(angle)*(gw.float/2-38)),
+        gh div 2+int(sin(angle)*(gh.float/2-27))))
+  var graph = newRgbaSprite(gw,gh)
+  for bond in bonds:
+    var a,b:tuple[seat,x,y:int]
+    for node in nodes:
+      if node.seat == bond.a: a=node
+      if node.seat == bond.b: b=node
+    let selected = state.connectionSelection == bond.a+1 or state.connectionSelection == bond.b+1
+    let color = if selected:
+        (if bond.strength >= 0.5: rgba(70,105,47,255) else: rgba(156,74,51,255))
+      elif bond.strength >= 0.5: rgba(157,166,106,255)
+      else: rgba(194,155,117,255)
+    let steps = max(abs(b.x-a.x),abs(b.y-a.y))
+    for step in 0..steps:
+      graph.fillRect(a.x+(b.x-a.x)*step div max(1,steps),
+        a.y+(b.y-a.y)*step div max(1,steps),1+(if selected: int(bond.strength*2) else: 0),1,color)
+  packet.addRgbaSpriteCached(state.spriteCache,14_001,graph,
+    "full connection graph " & $bonds & " " & $state.connectionSelection)
+  packet.addObject(65_101,gx,gy,21,DirectorFrameLayerId,14_001)
+  for node in nodes:
+    for player in sim.players:
+      if player.homeFlag != HomeMapIndexBase+node.seat: continue
+      let id = 14_100+player.gnomeIndex
+      if not state.spriteCache.hasCachedSprite(id,faceSize,faceSize):
+        let source = sim.portraits[player.gnomeIndex mod sim.portraits.len]
+        var icon = newRgbaSprite(faceSize,faceSize)
+        let step = 54 div faceSize
+        for y in 0..<faceSize:
+          for x in 0..<faceSize: icon.putPixel(x,y,source.rgbaSpriteAt(x*step,y*step))
+        packet.addRgbaSpriteCached(state.spriteCache,id,icon,"graph portrait " & player.playerName)
+      packet.addObject(65_130+node.seat,gx+node.x-faceSize div 2,gy+node.y-faceSize+8,23,DirectorFrameLayerId,id)
+    let label = node.seat.playerNameForHouse()
+    text(label,gx+node.x-sim.viewerTextWidth(label,ViewerBodyHeight) div 2,gy+node.y+10)
+    if state.connectionSelection > 0 and node.seat != state.connectionSelection-1:
+      let percentage = $int(round(bonds.strength(state.connectionSelection-1,node.seat)*100)) & "%"
+      text(percentage,gx+node.x-sim.viewerTextWidth(percentage,ViewerBodyHeight) div 2,gy+node.y+19)
+    state.connectionButtons.add((node.seat,ViewerRect(x:gx+node.x-21,y:gy+node.y-faceSize+6,width:42,height:faceSize+17)))
+  text($seats.len & " gnomes  /  " & $bonds.len & " connections",gx,gy+gh+3)
+  let dx = if split: gx+gw+12 else: gx+2
+  var y = if split: gy else: gy+gh+16
+  let width = if split: 208 else: gw-4
+  var lines:seq[string]
+  if state.connectionSelection == 0:
+    lines.add("All pairs are shown.")
+    lines.add("")
+    lines.add(sim.viewerMessageLines("Select a gnome to see its strengths and bedtime reflections. Select it again to clear.",width,ViewerBodyHeight))
+    lines.add("")
+    lines.add(sim.viewerMessageLines("Green: 50% or more. Brown: below 50%. Values follow the current replay time.",width,ViewerBodyHeight))
+  else:
+    let seat = state.connectionSelection-1
+    lines.add(seat.playerNameForHouse() & "'s connections")
+    let action = sim.connectionTimeline.latestAction(sim.tickCount,seat)
+    lines.add(sim.viewerMessageLines("Doing: " & (if action.action.len > 0: action.action.replace('_',' ') else: "not recorded"),width,ViewerBodyHeight))
+    let interview = sim.connectionTimeline.latestInterview(sim.tickCount,seat)
+    if interview.day == 0:
+      lines.add("First interview at bedtime.")
+    elif not interview.valid:
+      lines.add("Interview unavailable; no ranking invented.")
+    else:
+      lines.add("Day " & $interview.day & " - bedtime reflections")
+      for rank,item in interview.ranking:
+        lines.add("")
+        lines.add($(rank+1) & ". " & item.seat.playerNameForHouse())
+        lines.add(sim.viewerMessageLines(item.reason,width,ViewerBodyHeight))
+  let capacity = max(1,(panel.y+panel.height-25-y) div 9)
+  let pages = max(1,(lines.len+capacity-1) div capacity)
+  let page = state.connectionReflectionPage mod pages
+  for i in page*capacity..<min(lines.len,(page+1)*capacity):
+    text(lines[i],dx,y); y += 9
+  if pages > 1:
+    text("Page " & $(page+1) & "/" & $pages & "  >",dx,panel.y+panel.height-17)
+    state.connectionNextPage = ViewerRect(x:dx,y:panel.y+panel.height-21,width:width,height:14)
 
 proc addDirectorWorldView(
   packet: var seq[uint8],
@@ -3963,8 +4100,7 @@ proc addDirectorWorldView(
     packet.addViewerChrome(sim, state, layout)
   else:
     state.leaderboardButton = ViewerRect()
-    state.connectionButtons.setLen(0)
-    state.connectionNextPage = ViewerRect()
+  packet.addConnectionDebug(sim,state,layout)
   packet.addClockObjects(sim)
 
 proc replayCommandAt(layer, x, y: int): char =
@@ -5909,6 +6045,11 @@ proc applyReplayViewerMessage(state: PlayerViewerState, data: string, playback =
         state.mouseDown = item.down
         if item.down:
           if state.mouseLayer == DirectorFrameLayerId:
+            let debug = state.connectionDebugButton
+            if state.mouseX >= debug.x and state.mouseX < debug.x+debug.width and
+                state.mouseY >= debug.y and state.mouseY < debug.y+debug.height:
+              state.connectionDebugOpen = not state.connectionDebugOpen
+              state.connectionReflectionPage = 0
             for button in state.connectionButtons:
               let r = button.rect
               if state.mouseX >= r.x and state.mouseX < r.x+r.width and

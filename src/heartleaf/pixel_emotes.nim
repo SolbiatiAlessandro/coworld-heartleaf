@@ -62,17 +62,18 @@ proc pixelEmote*(tier: int): RgbaSprite =
       for x in [4,11]:
         for y in 7..10: result.dot(x,y,rgba(113,171,198,255))
 
-proc pixelHearts*(strength: float): RgbaSprite =
-  ## Three hearts, partial fill in sixths of each heart's interior width.
+proc pixelHearts*(strength: float, count = 3, spacing = 2): RgbaSprite =
+  ## Reuse the same seven-pixel hearts in dialogue and the leaderboard.
   # A seven by six silhouette drawn explicitly, with dark empty interiors.
   const rows = [".oo.oo.","orrrrro","orrrrro",".orrro.","..oro..","...o..."]
-  result = newRgbaSprite(25,7)
-  for heart in 0..2:
-    let fill = max(0.0,min(1.0,strength*3.0-heart.float))
+  let pitch = 7 + spacing
+  result = newRgbaSprite(max(1,count*pitch-spacing),7)
+  for heart in 0..<count:
+    let fill = max(0.0,min(1.0,strength*count.float-heart.float))
     for y,row in rows:
       for x,ch in row:
-        if ch == 'o': result.putPixel(heart*9+x,y,rgba(107,66,35,255))
+        if ch == 'o': result.putPixel(heart*pitch+x,y,rgba(107,66,35,255))
         elif ch == 'r':
           let color = if (x.float-1.0)/5.0 < fill: rgba(177,59,52,255)
             else: rgba(211,174,119,255)
-          result.putPixel(heart*9+x,y,color)
+          result.putPixel(heart*pitch+x,y,color)
