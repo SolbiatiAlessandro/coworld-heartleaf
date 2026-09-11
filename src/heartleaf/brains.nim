@@ -53,6 +53,7 @@ type
     connectionTimeline*: ConnectionTimeline
     interviewDay*: int
     interviewDeadline: float
+    interviewTimeoutSeconds: float
     interviews*: Table[int, Interview]
     interviewRequested: HashSet[int]
     gameLog*: GameLog
@@ -87,6 +88,14 @@ type
       ## member gets a short grace before the walker rule applies:
       ## a gnome enrolled mid-stride needs a moment to stop.
 
+proc configuredInterviewTimeout(): float =
+  ## Slow local model transports can opt into a longer, still bounded hold.
+  ## Keep the production default and neutral timeout behavior unchanged.
+  try:
+    float(clamp(parseInt(getEnv("HEARTLEAF_INTERVIEW_TIMEOUT_SECONDS", "45")),5,300))
+  except ValueError:
+    45.0
+
 proc newBrains*(
   navigation: Navigation,
   layout: WorldLayout,
@@ -104,6 +113,7 @@ proc newBrains*(
     phase: LlmPhase,
     turnIndex: 0,
     book: initEncounterBook(),
+    interviewTimeoutSeconds: configuredInterviewTimeout(),
     gameLog: newGameLog(),
     slotSeconds: parseFloat(getEnv(
       "HEARTLEAF_CONVERSATION_TICK_SECONDS",
@@ -823,7 +833,7 @@ proc bedtime(brains: Brains, observations: Table[int, Observation], now: float):
   if day == 0 or day <= brains.connections.appliedDay: return false
   if brains.interviewDay != day:
     brains.interviewDay = day
-    brains.interviewDeadline = now + 45.0
+    brains.interviewDeadline = now + brains.interviewTimeoutSeconds
     brains.interviews.clear()
     brains.interviewRequested.clear()
     for villager in brains.villagers.values:

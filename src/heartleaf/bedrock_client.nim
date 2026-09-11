@@ -113,7 +113,7 @@ proc bedrockPerformanceLatency(): string =
 proc bedrockConfigured*(mockReply = ""): bool =
   ## True when the model can be called, or a mock reply stands in.
   mockReply.len > 0 or mockBedrockReply().len > 0 or
-    bedrockToken().len > 0 or hasAwsCredentialSignal()
+    hasSidecarEndpoint() or bedrockToken().len > 0 or hasAwsCredentialSignal()
 
 proc isAnthropicModel*(modelId: string): bool =
   ## True for Claude ids, which use the Anthropic InvokeModel body; every

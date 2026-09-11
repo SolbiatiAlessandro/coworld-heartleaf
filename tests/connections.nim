@@ -1,5 +1,5 @@
 ## Relationship semantics, real brain request lifecycle, and replay folding.
-import std/[json, sequtils, strutils, tables]
+import std/[json, os, sequtils, strutils, tables]
 import heartleaf, replays
 import heartleaf/[brains, bedrock_client, common, connections, decisions,
   observation, protocol, souls, villager]
@@ -134,3 +134,36 @@ block:
   doAssert not minds.villagers[0].modeAllows(invalid)
 
 echo "Connections: math, interviews, deadlines, stale replies, reset, emoji and replay checks passed."
+
+# A slow opt-in transport must be allowed to finish a real interview after 45s,
+# while remaining bounded and still discarding late replies after its deadline.
+block:
+  let previous = getEnv("HEARTLEAF_INTERVIEW_TIMEOUT_SECONDS")
+  try:
+    putEnv("HEARTLEAF_INTERVIEW_TIMEOUT_SECONDS","300")
+    let sim = initSimServer(24)
+    let client = newScriptedBedrockClient()
+    let minds = newBrains(sim.navigationFor(),sim.worldLayoutFor(),client,24)
+    var obs:Table[int,Observation]
+    for seat in 0..2:
+      discard sim.addPlayer(seat.playerNameForHouse(),seat)
+      minds.attachSoul(seat,parseSoul("#!test-model\nYou are {name}."))
+      obs[seat] = sim.observe(seat)
+      obs[seat].minutes = DayEndMinutes
+      obs[seat].scene = Overlay
+    doAssert minds.advance(obs,0).paused
+    doAssert minds.advance(obs,46).paused, "local override waits beyond the default"
+    for request in client.started:
+      let order = if request.playerSlot == 0: @[1,2]
+        elif request.playerSlot == 1: @[0,2] else: @[0,1]
+      client.scriptReply(BedrockReply(tag:request.tag,statusCode:200,text:reply(order)))
+    doAssert not minds.advance(obs,70).paused
+    doAssert minds.connections.bonds.strength(0,1) == 1
+    for value in obs.mvalues: value.dayNumber=2
+    doAssert minds.advance(obs,71).paused
+    doAssert not minds.advance(obs,372).paused, "the opt-in hold still expires"
+    doAssert minds.connections.bonds.strength(0,1) == 1
+  finally:
+    if previous.len > 0: putEnv("HEARTLEAF_INTERVIEW_TIMEOUT_SECONDS",previous)
+    else: delEnv("HEARTLEAF_INTERVIEW_TIMEOUT_SECONDS")
+echo "Slow local interview window: delayed valid replies and bounded failure passed."

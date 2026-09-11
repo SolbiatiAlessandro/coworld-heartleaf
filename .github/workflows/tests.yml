@@ -38,6 +38,7 @@ jobs:
         run: |
           nim r tests/tests.nim
           nim r tests/connections.nim
+          python3 tests/claude_subscription_bridge_test.py
 
       - name: Viewer and route regressions
         run: |

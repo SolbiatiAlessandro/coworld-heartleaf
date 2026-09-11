@@ -93,10 +93,10 @@ give brief reasons based on real events, especially help earning game
 points, care, kept/broken promises and dinner hosting/attendance.
 First rank contributes +0.5, last -0.5, with intermediate ranks spaced
 evenly. The average of both gnomes' contributions changes their shared
-bond, clamped to 0..1. With only one partner rankings are neutral.
+connection, clamped to 0..1. With only one partner rankings are neutral.
 Missing interviews contribute zero. Your connection score sums your
-current bonds; food/game score stays separate. No points for talk volume.
-You know your current bonds from the report and can discuss actual changes.
+current connections; food/game score stays separate. No points for talk volume.
+You know your current connections from the report and can discuss actual changes.
 
 Send emoji:
 Use {"action":"send_emoji","targetName":"Anton","emotion":"very_happy",
