@@ -1,0 +1,14 @@
+{
+  "pr": "https://github.com/Metta-AI/coworld-heartleaf/pull/51",
+  "viewer_commit": "90d5915a0ecfb476740d75bd897ff5cd7d067c81",
+  "replay": "two-day.bitreplay",
+  "replay_sha256": "6428c9ef463dacc00d31bd5e718f336af05098bb19a4a7dd90f2f071810d8804",
+  "provenance": "Unchanged real nine-gnome, two-day Claude Haiku 4.5 game. 15/18 bedtime interviews valid; three night-two timeouts contributed zero. Viewer repair compresses silent gaps and closes stale overnight groups.",
+  "validation": "Continuous native playback reaches all 12 conversations at all eight speeds; 1X completes in 8821 frames with 49 distinct aired lines and matching simulation hashes. Browser click-through remains unverified.",
+  "artifacts": {
+    "index.html": "d79d93b5a563e605f80ac21348b490902c4818ae09bced7a0b3d41de194dd769",
+    "replay_viewer.js": "1332734a1cf2ba10c96e3d04b7b01cbf12beef95b3772b08b1f2865765f6e080",
+    "replay_viewer.wasm": "637c490ebcc0bf527f8f009873d354244a6d1bcef98c7b2a1a44dbf74cb9f86f",
+    "replay_viewer.data": "1423d91996c5fb6de3a5848a1e3192df162a0b33694e679c464f32cbe99aa9a5"
+  }
+}
