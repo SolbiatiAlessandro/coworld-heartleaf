@@ -3,10 +3,35 @@
 This feature branch is rebased onto viewer stability PR #50 at `e164a7e`.
 Merge #50 first, then rebase onto master; the connections work stays in PR #51.
 
-[Current screenshots](connections/director-repair-2026-09-11/README.md) ·
+[Bedtime ranking screenshots](connections/bedtime-review-2026-09-11/README.md) ·
+[World and director screenshots](connections/director-repair-2026-09-11/README.md) ·
 [Run a real local Claude-subscription playtest](claude-subscription-replays.md).
 
-## Director repair — September 11
+## Watch the bedtime rankings
+
+At **9pm**, after the day's conversations, the replay holds for a bedtime scene.
+Each gnome's portrait opens its ordered ranking of the other gnomes. Select a rank
+to read that gnome's recorded reason. Clicking a portrait or rank pauses playback;
+Play resumes the sequence. Each gnome gets eight seconds at 1X, followed by the
+**Connections updated** screen, with before/after hearts. The left leaderboard
+keeps the old hearts through the rankings and switches at the update screen.
+
+The **Night 1** and **Night 2** buttons jump directly to those moments and pause.
+The graph stays an optional debug view. Missing or timed-out interviews are
+labelled as unavailable, with zero contribution; no ranking is invented.
+
+Both nights, all nine gnome pages and both update screens appear in continuous
+playback of the real recording. All 12 conversations and 49 distinct aired lines
+remain; the full 1X presentation now takes **12,993 frames (~9 minutes)** including
+bedtime reading time. All eight speeds complete with matching simulation hashes.
+`tests/bedtime_viewer.nim` also checks page/rank selection, pause, jump, rewind,
+next conversation, restart and compact layouts. Reviewed images are actual
+protocol renders; browser/GPU interaction is unverified while the Mac is locked.
+
+This uses the existing recorded game. Its sparse decision timing and stationary
+gnomes are historical actions, and have not been replaced by a new simulation.
+
+## Director repair — September 11 (before bedtime presentation)
 
 The first public viewer passed simulation hashes but was not watchable at its
 normal speed. The real recording spaces many model replies 360 ticks apart;

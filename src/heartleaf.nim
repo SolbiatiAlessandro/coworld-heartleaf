@@ -53,6 +53,7 @@ const
   DuskStartMinutes = 17 * 60
   DayTintCount = 5
   TargetFps = 24.0
+  NightlyReviewSeconds = 8.0
   HealthzPath = "/healthz"
   WebSocketPath = "/player"
   GlobalWebSocketPath = "/global"
@@ -499,6 +500,10 @@ type
     conversationCircles*: seq[tuple[x, y, radius: int]]
       ## Viewer-only sparkle rings. Never hashed.
     connectionTimeline*: ConnectionTimeline
+    replayNights: seq[NightlyReview]
+    replayNightIndex: int
+    replayNightActive: bool
+    replayNightTime: float
     conversationTimeline: ConversationTimeline
       ## Replay chat-mode objects from game.log. Empty in live play.
     conversationAnchors: Table[int, ConversationAnchor]
@@ -630,6 +635,11 @@ type
     cardLayoutKey: string
     cardRowHeight: int
     cardSlots: array[HouseCount, int] # One-based slots, retained for this shot.
+    nightJumpButtons: seq[tuple[tick:int, rect:ViewerRect]]
+    nightStageButtons: seq[tuple[stage:int, rect:ViewerRect]]
+    nightRankButtons: seq[tuple[rank:int, rect:ViewerRect]]
+    nightRankSelection: int
+    nightLastStage: string
     connectionDebugOpen*: bool
     connectionDebugButton: ViewerRect
     connectionSelection*: int # seat + 1; zero means full-graph introduction
@@ -3788,7 +3798,10 @@ proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
     ch = layout.canvasHeight
     wide = layout.railWidth > 0
     panelY = if wide: 4 else: 36
-    hasConnections = sim.connectionTimeline.bondsAt(sim.tickCount).len > 0
+    shownBonds = if sim.replayNightActive and sim.replayNightTime < float(sim.replayNights[sim.replayNightIndex].seats.len)*NightlyReviewSeconds:
+      sim.replayNights[sim.replayNightIndex].before
+      else: sim.connectionTimeline.bondsAt(sim.tickCount)
+    hasConnections = shownBonds.len > 0
     heading = if hasConnections: 14 else: 0
     rowH = FaceSize + 1
     # The wide rail sits beside the transport, so it can use the full height.
@@ -3819,7 +3832,7 @@ proc addViewerChrome(packet: var seq[uint8], sim: SimServer,
       for line in 0..<min(2,label.len):
         text(label[line],panel.x+55,y+(if hasConnections: 0 else: 9-(if label.len>1: 4 else: 0))+line*9,ViewerNameHeight)
       if hasConnections:
-        let bonds = sim.connectionTimeline.bondsAt(sim.tickCount)
+        let bonds = shownBonds
         let strength = bonds.connectionScore(seat)/max(1,sim.players.len-1).float
         let id = 13_000+seat
         packet.addRgbaSpriteCached(state.spriteCache,id,pixelHearts(strength,10,1),
@@ -3948,6 +3961,125 @@ proc addConnectionDebug(packet: var seq[uint8], sim: SimServer,
     text("Page " & $(page+1) & "/" & $pages & "  >",dx,panel.y+panel.height-17)
     state.connectionNextPage = ViewerRect(x:dx,y:panel.y+panel.height-21,width:width,height:14)
 
+proc addNightlyReview(packet: var seq[uint8], sim: SimServer,
+    state: PlayerViewerState, layout: ViewerLayout) =
+  state.nightJumpButtons.setLen(0)
+  state.nightStageButtons.setLen(0)
+  state.nightRankButtons.setLen(0)
+  var slot = 0
+  template text(label:string,x,y:int) =
+    packet.addViewerText(sim,state.spriteCache,label,x,y,slot,
+      objectBase=30_000,dark=true,z=36)
+  template frame(id,obj:int,r:ViewerRect) =
+    if not state.spriteCache.hasCachedSprite(id,r.width,r.height):
+      packet.addRgbaSpriteCached(state.spriteCache,id,
+        sim.chatBanner.nineSliceSprite(r.width,r.height,PanelSliceInset),"bedtime panel " & $id)
+    packet.addObject(obj,r.x,r.y,30,DirectorFrameLayerId,id)
+  template portrait(seat,x,y,size,obj:int) =
+    for player in sim.players:
+      if player.homeFlag != HomeMapIndexBase+seat: continue
+      let id = 15_100 + size*HouseCount + seat
+      if not state.spriteCache.hasCachedSprite(id,size,size):
+        let source = sim.portraits[player.gnomeIndex mod sim.portraits.len]
+        var icon = newRgbaSprite(size,size)
+        for py in 0..<size:
+          for px in 0..<size:
+            icon.putPixel(px,py,source.rgbaSpriteAt(px*(54 div size),py*(54 div size)))
+        packet.addRgbaSpriteCached(state.spriteCache,id,icon,"bedtime portrait " & player.playerName)
+      packet.addObject(obj,x,y,35,DirectorFrameLayerId,id)
+  template hearts(value:float,count,x,y,id,obj:int) =
+    packet.addRgbaSpriteCached(state.spriteCache,id,pixelHearts(value,count,1),"bedtime hearts " & $value)
+    packet.addObject(obj,x,y,35,DirectorFrameLayerId,id)
+  let cw = layout.canvasWidth
+  let ch = layout.canvasHeight
+  let firstNight=max(0,min(sim.replayNightIndex-1,sim.replayNights.len-3))
+  let pastNight=min(sim.replayNights.len,firstNight+3)
+  for i in firstNight..<pastNight:
+    let night=sim.replayNights[i]
+    let button = ViewerRect(x:max(4,cw-116-(pastNight-i)*72),y:18,width:68,height:18)
+    frame(15_000+i-firstNight,32_000+i-firstNight,button)
+    text("Night " & $night.day & "  >",button.x+8,button.y+6)
+    state.nightJumpButtons.add((night.tick,button))
+  if not sim.replayNightActive: return
+  let night = sim.replayNights[sim.replayNightIndex]
+  let stage = min(night.seats.len,int(sim.replayNightTime/NightlyReviewSeconds))
+  let stageKey = $night.day & ":" & $stage
+  if stageKey != state.nightLastStage:
+    state.nightRankSelection = 0
+    state.nightLastStage = stageKey
+  let panelWidth=min(500,cw-layout.railWidth-12)
+  let panelHeight=max(140,min(290,ch-96))
+  let panel = ViewerRect(x:layout.railWidth+(cw-layout.railWidth-panelWidth) div 2,
+    y:max(42,(ch-50-panelHeight) div 2),width:panelWidth,height:panelHeight)
+  frame(15_010,32_010,panel)
+  let compact = panel.height < 220
+  let faceSize = if compact: 18 else: 27
+  let bodyY = panel.y+(if compact: 46 else: 73)
+  let bottom = panel.y+panel.height-(if compact: 10 else: 20)
+  let tabWidth = (panel.width-24-60) div max(1,night.seats.len)
+  text("Day " & $night.day & "  /  9pm  /  " & (if stage==night.seats.len: "Connections updated" else: "Bedtime"),panel.x+12,panel.y+11)
+  for i,seat in night.seats:
+    let x = panel.x+12+i*tabWidth
+    portrait(seat,x+(tabWidth-faceSize) div 2,panel.y+24,faceSize,32_100+i)
+    if not compact:
+      let name = seat.playerNameForHouse()
+      text(name,x+(tabWidth-sim.viewerTextWidth(name,ViewerBodyHeight)) div 2,panel.y+53)
+    if stage==i:
+      text((if compact: "*" else: "^"),x+(if compact: tabWidth-7 else: tabWidth div 2-2),panel.y+(if compact: 29 else: 62))
+    state.nightStageButtons.add((i,ViewerRect(x:x,y:panel.y+23,width:tabWidth,height:(if compact: 28 else: 44))))
+  let update = ViewerRect(x:panel.x+panel.width-69,y:panel.y+26,width:57,height:24)
+  frame(15_011,32_011,update)
+  text("Update",update.x+10,update.y+9)
+  state.nightStageButtons.add((night.seats.len,update))
+  if stage < night.seats.len:
+    let interview = night.interviews[stage]
+    let name = night.seats[stage].playerNameForHouse()
+    text(name & "'s ranking",panel.x+14,bodyY)
+    if not interview.valid:
+      var y=bodyY+20
+      for line in sim.viewerMessageLines("No ranking received. " & name & "'s contribution is zero tonight. Other gnomes' rankings can still change their connections.",panel.width-34,ViewerBodyHeight):
+        if y+7 <= bottom: text(line,panel.x+14,y)
+        y+=9
+    else:
+      let listWidth = min(142,panel.width div 2-10)
+      let rowH = max(8,min(22,(bottom-bodyY-18) div max(1,interview.ranking.len)))
+      let selection = clamp(state.nightRankSelection,0,max(0,interview.ranking.len-1))
+      for rank,item in interview.ranking:
+        let x=panel.x+14
+        let y=bodyY+15+rank*rowH
+        text((if rank==selection: "> " else: "  ") & $(rank+1) & ".",x,y+2)
+        if rowH>=20: portrait(item.seat,x+23,y-4,18,32_200+rank)
+        text(item.seat.playerNameForHouse(),x+(if rowH>=20: 46 else: 25),y+2)
+        state.nightRankButtons.add((rank,ViewerRect(x:x,y:y-2,width:listWidth,height:rowH)))
+      if interview.ranking.len>0:
+        let item=interview.ranking[selection]
+        let x=panel.x+listWidth+24
+        let width=panel.width-listWidth-42
+        text("Why " & item.seat.playerNameForHouse() & "?",x,bodyY)
+        var y=bodyY+18
+        for line in sim.viewerMessageLines(item.reason,width,ViewerBodyHeight):
+          if y+7<=bottom: text(line,x,y)
+          y+=9
+        if y+24<=bottom:
+          text("Connection before tonight",x,y+11)
+          hearts(night.before.strength(interview.seat,item.seat),3,x,y+23,15_800,32_400)
+  else:
+    let x=panel.x+14
+    let nameWidth=70
+    let oldX=x+nameWidth
+    let newX=oldX+100
+    text("Before",oldX,bodyY)
+    text("After",newX,bodyY)
+    let rowH=max(8,min(22,(bottom-bodyY-15) div max(1,night.seats.len)))
+    for i,seat in night.seats:
+      let y=bodyY+15+i*rowH
+      text(seat.playerNameForHouse(),x,y+2)
+      hearts(night.before.connectionScore(seat)/max(1,night.seats.len-1).float,10,oldX,y,15_810+seat,32_410+seat)
+      text(">",oldX+85,y+2)
+      hearts(night.after.connectionScore(seat)/max(1,night.seats.len-1).float,10,newX,y,15_830+seat,32_430+seat)
+  if not compact:
+    text("Select a gnome or rank to pause and read. Play continues.",panel.x+12,panel.y+panel.height-18)
+
 proc addDirectorWorldView(
   packet: var seq[uint8],
   sim: SimServer,
@@ -3961,8 +4093,8 @@ proc addDirectorWorldView(
     tintIndex = sim.dayTintIndex()
     canvasWidth = frameLayout(0,0,1,1,frameWidth,frameHeight,true,replayControls,
       sidebars=true).canvasWidth
-    conversation = sim.directorFocusActive or sim.directorFrameBlend > 0 or
-      sim.directorSceneMap != MainMapIndex
+    conversation = not sim.replayNightActive and (sim.directorFocusActive or sim.directorFrameBlend > 0 or
+      sim.directorSceneMap != MainMapIndex)
     cropWidth = if forestBackdrop and sim.directorSceneMap == MainMapIndex:
       sim.directorCamW + max(0.0, sim.directorCamH * 1.5 - sim.directorCamW) *
         (1.0 - sim.directorFrameBlend)
@@ -3975,6 +4107,7 @@ proc addDirectorWorldView(
       focusBlend = sim.directorFrameBlend,
       overviewAspect = (if forestBackdrop: 1.5 else: 0.0), sidebars = true)
   var cards = sim.activeDirectorCards(min(DirectorCardWidth, max(160, canvasWidth - 28)))
+  if sim.replayNightActive: cards.setLen(0)
   # Reserve screen-space slots for the whole shot. Neither camera drift nor
   # moving gnomes may reposition dialogue. Recorded future lines determine
   # space only; activeDirectorCards still controls which text has aired.
@@ -4100,7 +4233,13 @@ proc addDirectorWorldView(
     packet.addViewerChrome(sim, state, layout)
   else:
     state.leaderboardButton = ViewerRect()
-  packet.addConnectionDebug(sim,state,layout)
+  if sim.replayNightActive:
+    state.connectionDebugButton = ViewerRect()
+    state.connectionButtons.setLen(0)
+    state.connectionNextPage = ViewerRect()
+  else:
+    packet.addConnectionDebug(sim,state,layout)
+  if replayControls: packet.addNightlyReview(sim,state,layout)
   packet.addClockObjects(sim)
 
 proc replayCommandAt(layer, x, y: int): char =
@@ -5755,7 +5894,17 @@ proc buildConversationQueue*(sim: SimServer, finalTick: int) =
   ## conversation in birth order, same-tick births together in a
   ## stable order. An empty queue (a day with no conversations) keeps
   ## plain playback.
+  sim.replayNights = sim.connectionTimeline.nightlyReviews()
+  sim.replayNightIndex = 0
+  sim.replayNightActive = false
+  sim.replayNightTime = 0
   sim.convQueue = sim.conversationTimeline.conversationSpans(finalTick)
+  # Bedtime closes the day's talk even in recordings missing curfew exits.
+  for span in sim.convQueue.mitems:
+    for night in sim.replayNights:
+      if span.birthTick < night.tick and span.deathTick > night.tick:
+        span.deathTick = night.tick
+        break
   sim.convQueueIndex = 0
   sim.convQueueLast = -1
   sim.convQueueCommitted = false
@@ -5825,6 +5974,9 @@ proc restartConversationQueue(sim: SimServer) =
   sim.convQueueLast = -1
   sim.convQueueCommitted = false
   sim.convQueueFurthest = 0
+  sim.replayNightIndex = 0
+  sim.replayNightActive = false
+  sim.replayNightTime = 0
   sim.releaseDirectorCommit()
 
 proc stepConversationQueue(
@@ -5861,17 +6013,30 @@ proc stepConversationQueue(
     if sim.tickCount >= sim.convQueue[sim.convQueueIndex].birthTick:
       sim.commitConversation(replay, sim.convQueueIndex)
 
+proc alignNightReview(sim: SimServer) =
+  sim.replayNightActive = false
+  sim.replayNightTime = 0
+  sim.replayNightIndex = 0
+  while sim.replayNightIndex < sim.replayNights.len:
+    let night = sim.replayNights[sim.replayNightIndex]
+    if sim.tickCount < night.tick + ScoreScreenTicks:
+      sim.replayNightActive = sim.tickCount >= night.tick
+      break
+    inc sim.replayNightIndex
+
 proc applyReplaySeek*(replay: var ReplayPlayer, sim: SimServer, tick: int) =
   ## Seeks replay playback and pauses on the target tick, then derives
   ## the queue position from the new playhead.
   replay.playing = false
   replay.seekReplay(sim, clamp(tick, 0, replay.replayMaxTick()))
   sim.alignConversationQueue(replay)
+  sim.alignNightReview()
 
 proc applyReplayConversation*(replay: var ReplayPlayer, sim: SimServer, index: int) =
   ## Explicit list selection also distinguishes concurrent conversations.
   if index >= 0 and index < sim.convQueue.len:
     sim.commitConversation(replay, index)
+    sim.alignNightReview()
     replay.playing = true
 
 proc applyReplayCommand*(
@@ -5942,6 +6107,8 @@ proc applyReplayCommand*(
       sim.commitConversation(replay, max(0, sim.convQueueLast - 1))
   else:
     discard
+  if command in [',', '<', 'b', 'e', '.', '>', 'n', 'N']:
+    sim.alignNightReview()
   if replay.speedIndex != previousSpeed:
     sim.directorShowAccum = 0
     replay.frameAccum = 0
@@ -5949,6 +6116,7 @@ proc applyReplayCommand*(
       replay.replayMaxTick() > 0 and sim.tickCount >= replay.replayMaxTick():
     sim.restartConversationQueue()
     replay.seekReplay(sim, 0)
+    sim.alignNightReview()
 
 
 when not defined(emscripten):
@@ -6055,6 +6223,19 @@ proc applyReplayViewerMessage(state: PlayerViewerState, data: string, playback =
         state.mouseDown = item.down
         if item.down:
           if state.mouseLayer == DirectorFrameLayerId:
+            for button in state.nightJumpButtons:
+              let r=button.rect
+              if state.mouseX>=r.x and state.mouseX<r.x+r.width and state.mouseY>=r.y and state.mouseY<r.y+r.height:
+                state.replayInputs.add(ReplayViewerInput(command:'B',tick:button.tick))
+            for button in state.nightStageButtons:
+              let r=button.rect
+              if state.mouseX>=r.x and state.mouseX<r.x+r.width and state.mouseY>=r.y and state.mouseY<r.y+r.height:
+                state.replayInputs.add(ReplayViewerInput(command:'J',tick:button.stage))
+            for button in state.nightRankButtons:
+              let r=button.rect
+              if state.mouseX>=r.x and state.mouseX<r.x+r.width and state.mouseY>=r.y and state.mouseY<r.y+r.height:
+                state.nightRankSelection=button.rank
+                state.replayInputs.add(ReplayViewerInput(command:'P'))
             let debug = state.connectionDebugButton
             if state.mouseX >= debug.x and state.mouseX < debug.x+debug.width and
                 state.mouseY >= debug.y and state.mouseY < debug.y+debug.height:
@@ -6118,7 +6299,10 @@ proc drainReplayViewerInput(state: PlayerViewerState, maxTick: int,
 proc applyReplayInputs(replay: var ReplayPlayer, sim: SimServer,
     inputs: seq[ReplayViewerInput]) =
   for input in inputs:
-    if input.command == '\0': replay.applyReplaySeek(sim,input.tick)
+    if input.command in ['\0', 'B']: replay.applyReplaySeek(sim,input.tick)
+    elif input.command == 'J' and sim.replayNightActive:
+      sim.replayNightTime = float(clamp(input.tick,0,sim.replayNights[sim.replayNightIndex].seats.len))*NightlyReviewSeconds
+      replay.playing = false
     else: replay.applyReplayCommand(sim,input.command)
 
 proc newReplayViewerState*(): PlayerViewerState =
@@ -6170,6 +6354,14 @@ proc advanceReplayPresentation*(
   ## Shared server/static playback, camera, and dialogue pacing. A pause
   ## freezes the whole presentation, not only the simulation tick.
   let pausedRefresh = not replay.playing
+  if sim.replayNightActive:
+    if replay.playing:
+      let speed = replay.replaySpeedIndex()
+      sim.replayNightTime += float(PlaybackSpeedTicks[speed]) / float(ReplayFps*PlaybackSpeedFrames[speed])
+      if sim.replayNightTime >= float(sim.replayNights[sim.replayNightIndex].seats.len+1)*NightlyReviewSeconds:
+        sim.replayNightActive = false
+        inc sim.replayNightIndex
+    return
   if pausedRefresh and not sim.replayPresentationDirty and sim.directorCamW > 0:
     return
   if replay.playing:
@@ -6180,6 +6372,13 @@ proc advanceReplayPresentation*(
     # deaths, rewind through same-tick birth groups, resume
     # from the furthest tick shown.
     sim.stepConversationQueue(replay)
+    if not sim.convQueueCommitted and sim.replayNightIndex < sim.replayNights.len and
+        sim.tickCount >= sim.replayNights[sim.replayNightIndex].tick:
+      sim.replayNightActive = true
+      sim.replayNightTime = 0
+      sim.releaseDirectorCommit()
+      sim.updateDirectorCamera(snap=true)
+      return
     # Speed is a multiplier of the director's current base pace at every
     # setting. Slow motion must never advance faster than the 1X show.
     let
@@ -6208,6 +6407,8 @@ proc advanceReplayPresentation*(
       elif sim.convQueueIndex < sim.convQueue.len:
         ticksThisFrame = min(ticksThisFrame, max(0,
           sim.convQueue[sim.convQueueIndex].birthTick - sim.tickCount))
+    if not sim.convQueueCommitted and sim.replayNightIndex < sim.replayNights.len:
+      ticksThisFrame = min(ticksThisFrame,max(0,sim.replayNights[sim.replayNightIndex].tick-sim.tickCount))
     # Camera travel preserves the first line at every playback speed.
     if directorWatching and (sim.directorTweenLeft > 0 or
         (sim.replayPresentationDirty and sim.convQueueCommitted)):

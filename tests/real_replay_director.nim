@@ -19,16 +19,19 @@ sim.buildConversationQueue(replay.replayMaxTick())
 doAssert sim.convQueue.len == 12
 for span in sim.convQueue:
   if span.id in [5,6]:
-    doAssert span.deathTick == 4560, "old party records must end at the new day"
+    doAssert span.deathTick == 4320, "old party records must end when the gnomes go to bed"
 var state = newReplayViewerState()
 state.setViewerSize(1440,900)
 var visited: HashSet[int]
+var nights: HashSet[string]
 var frames, firstShotFrames, currentShotFrames, previousId: int
 var captured: HashSet[int]
 var aired: HashSet[string]
 while replay.playing and frames < 18000:
   discard sim.replayViewerFrame(replay,state,true)
   inc frames
+  if sim.replayNightActive:
+    nights.incl($sim.replayNights[sim.replayNightIndex].day & ":" & $min(9,int(sim.replayNightTime/8.0)))
   let id = sim.directorCommitEncounter
   if id != previousId: currentShotFrames = 0
   previousId = id
@@ -58,6 +61,7 @@ while replay.playing and frames < 18000:
     doAssert frozen == (sim.tickCount,sim.directorCamX,sim.directorCamY,sim.replayPresentationTime)
     replay.applyReplayCommand(sim,'p')
 doAssert not replay.playing and sim.tickCount==replay.replayMaxTick()
+doAssert nights.len==20, "all nine rankings and update must appear on both nights"
 doAssert visited.len==12, "every recorded conversation must receive a turn"
 doAssert sim.convQueueIndex==sim.convQueue.len
 doAssert aired.len >= 20, "dialogue must still appear while empty time is compressed"
@@ -76,13 +80,16 @@ for setting in 0..7:
   trial.buildConversationQueue(run.replayMaxTick())
   var count = 0
   var seen:HashSet[int]
+  var seenNights:HashSet[int]
   while run.playing and count < 96000:
     trial.advanceReplayPresentation(run)
     inc count
+    if trial.replayNightActive:seenNights.incl(trial.replayNightIndex)
     if trial.directorCommitEncounter>0:seen.incl(trial.directorCommitEncounter)
     doAssert not run.hashValidationFailed
   doAssert not run.playing and trial.tickCount==run.replayMaxTick()
   doAssert seen.len==12
+  doAssert seenNights.len==2
   doAssert count<previousFrames, "each faster setting must finish sooner"
   previousFrames=count
   echo "Real replay speed ",setting,": ",count," frames, all 12 conversations"

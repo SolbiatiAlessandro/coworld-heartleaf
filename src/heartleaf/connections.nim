@@ -27,6 +27,11 @@ type
     interview*: Interview
   ConnectionTimeline* = object
     events*: seq[ConnectionEvent]
+  NightlyReview* = object
+    tick*, day*: int
+    seats*: seq[int]
+    interviews*: seq[Interview]
+    before*, after*: seq[Bond]
   ConnectionLedger* = object
     seats*: seq[int]
     bonds*: seq[Bond]
@@ -167,6 +172,25 @@ proc latestInterview*(timeline: ConnectionTimeline, tick, seat: int): Interview 
   for event in timeline.events:
     if event.tick > tick: break
     if event.kind == "connection-interview" and event.seat == seat: result = event.interview
+
+proc nightlyReviews*(timeline: ConnectionTimeline): seq[NightlyReview] =
+  ## One review per committed night. Gather same-tick interviews explicitly:
+  ## the recorded world clock holds while replies arrive and bonds commit.
+  var before: seq[Bond]
+  for event in timeline.events:
+    if event.kind == "connection-update":
+      var night = NightlyReview(tick:event.tick, day:event.day,
+        seats:event.seats, before:before, after:event.bonds)
+      for seat in night.seats:
+        var interview = Interview(seat:seat,day:event.day)
+        for row in timeline.events:
+          if row.tick > event.tick: break
+          if row.kind == "connection-interview" and row.day == event.day and row.seat == seat:
+            interview = row.interview
+        night.interviews.add(interview)
+      result.add(night)
+    if event.kind in ["connection-start", "connection-update"]:
+      before = event.bonds
 
 proc interviewPrompt*(seats: seq[int], self: int): string =
   var names: seq[string]
