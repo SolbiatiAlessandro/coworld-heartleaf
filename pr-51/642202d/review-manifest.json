@@ -1,0 +1,15 @@
+{
+  "pr": "https://github.com/Metta-AI/coworld-heartleaf/pull/51",
+  "viewer_commit": "642202d9aaee0d6ca9f644e45198f90714b2d3f4",
+  "replay": "two-day.bitreplay",
+  "replay_sha256": "6428c9ef463dacc00d31bd5e718f336af05098bb19a4a7dd90f2f071810d8804",
+  "provenance": "Unchanged real nine-gnome, two-day Claude Haiku 4.5 game. Sparse historical decisions and three night-two interview timeouts remain.",
+  "review_instructions": "Use Night 1 or Night 2 to jump to 9pm. Select gnomes or ranks to pause and read; Play resumes. Update shows before/after hearts.",
+  "validation": "Continuous playback visits all 12 conversations, 18 gnome ranking pages and two updates at every speed, with matching simulation hashes. 1X: 12993 frames, 49 distinct aired dialogue lines. Native input and rendering checked; browser/GPU click-through remains unverified.",
+  "artifacts": {
+    "index.html": "a64cdacde866004d9b807983d76828a3849f6513dc0db90344193457bd696a77",
+    "replay_viewer.js": "1332734a1cf2ba10c96e3d04b7b01cbf12beef95b3772b08b1f2865765f6e080",
+    "replay_viewer.wasm": "2bf1f8fd3e15529b9a19f26bd5adf5cdeecfdb54aeb30ae8efeac6a3a7ab8977",
+    "replay_viewer.data": "1423d91996c5fb6de3a5848a1e3192df162a0b33694e679c464f32cbe99aa9a5"
+  }
+}
