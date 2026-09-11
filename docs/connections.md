@@ -3,6 +3,7 @@
 This feature branch is rebased onto viewer stability PR #50 at `e164a7e`.
 Merge #50 first, then rebase onto master; the connections work stays in PR #51.
 
+[Current screenshots](connections/review-2026-09-11/README.md) ·
 [Run a real local Claude-subscription playtest](claude-subscription-replays.md).
 
 ## What ships
@@ -89,14 +90,12 @@ control clicks, eight playback speeds and 64 pause/speed combinations, routes, a
 the static WASM build. New viewer checks exercise selection, reflection pages,
 pause, next/previous, speeds, end/restart, and forward/backward seeks across days.
 
-The images below are **offline renders of actual replay sprite-protocol frames**.
-The Mac was locked, so OS/browser click-through was unavailable. The authored
-fixture does not validate model ranking quality or request latency. Claude
-subscription playtest observations are [documented separately](connections/claude-observations.md).
-
-![Day two leaderboard](connections/06-day-two-overview.png)
-![Conversation with half-filled hearts and intentional reactions](connections/03-conversation.png)
-![Full village debug graph and selected gnome reflections](connections/07-bedtime-results.png)
+The authored fixture does not validate model ranking quality or request latency.
+The [current screenshot gallery](connections/review-2026-09-11/README.md) uses the
+separate **real Claude replay**, rendered with the latest viewer code. It shows
+numeric points, ten Connections hearts, the “Connection with Anton” card label,
+and the full debug graph both closed and explicitly opened. These are offline
+renders of actual drawing packets; OS/browser click-through remains unverified.
 
 ## Real Claude-subscription playtest
 
