@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Heartleaf connections — replay review</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#211b18;color:#f5e7c6}
+body{max-width:1152px;margin:0 auto;padding:28px 20px 48px}h1{font-size:clamp(24px,4vw,38px);margin:0 0 10px}p{line-height:1.55;color:#d5c7ac}nav{display:flex;flex-wrap:wrap;gap:12px;margin:22px 0}a{color:#f3d487}nav a{padding:10px 14px;border:1px solid #806649;border-radius:5px;text-decoration:none;background:#382b20}video{display:block;width:100%;background:#111;border:1px solid #806649;border-radius:6px;image-rendering:pixelated}.caption{font-size:14px}h2{font-size:20px;margin-top:28px}li{line-height:1.6;margin:6px 0}footer{border-top:1px solid #574735;margin-top:30px;padding-top:16px;font-size:14px}
+</style>
+</head>
+<body>
+<h1>Heartleaf connections</h1>
+<p>A fresh game with nine autonomous gnomes, followed through conversations, dinner and bedtime rankings.</p>
+<nav aria-label="Review links"><a href="./">Play the interactive replay</a><a href="https://github.com/Metta-AI/coworld-heartleaf/pull/51">Review PR #51</a><a href="review-manifest.json">Run provenance</a></nav>
+<video controls playsinline preload="metadata" poster="01-overview.png"><source src="episode.mp4" type="video/mp4">Your browser cannot play this video. <a href="episode.mp4">Download the MP4</a>.</video>
+<p class="caption">Actual replay rendering at 1X playback, 4 frames per second. The director shows overlapping conversations in sequence, so the game clock can move backward between them. No model waiting time is included.</p>
+<h2>What to look for</h2>
+<ul><li>Gnomes receive a fresh plan when they leave a conversation and can move away.</li><li>The camera follows dialogue between the village and houses without repeating old lines at bedtime.</li><li>Use <strong>Night 1</strong> in the interactive viewer to inspect rankings, reasons and the resulting connection hearts.</li></ul>
+<p>Recorded using real local Claude subscription calls, with ordinary game planning and conversation intervals. This is one observed episode: six gnomes ate and three missed dinner through their planning choices. Some bedtime explanations contain mistaken memories. Gnomes can still spend time talking or waiting after a completed task.</p>
+<footer>Game: <code>1141ef2</code> · Viewer: <code>a5b6e6c</code> · <a href="episode.bitreplay">Download the replay</a> · <a href="https://github.com/SolbiatiAlessandro/coworld-heartleaf/blob/17a6af4dd75faf0dd7ace63a4cc0286424b5459a/docs/connections/review-2026-09-14/README.md">Review notes</a></footer>
+</body></html>
